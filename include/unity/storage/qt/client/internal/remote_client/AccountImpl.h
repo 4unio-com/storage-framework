@@ -39,7 +39,8 @@ class AccountImpl : public QObject, public virtual AccountBase
 {
 public:
     AccountImpl(std::weak_ptr<Runtime> const& runtime,
-                int account_id,
+                QString const& bus_name,
+                QString const& object_path,
                 QString const& owner,
                 QString const& owner_id,
                 QString const& description);

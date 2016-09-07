@@ -67,7 +67,7 @@ string get_data_dir()
     if (ec)
     {
         QString msg = "Account::roots(): Cannot stat " + QString(dir) + ": " + QString::fromStdString(ec.message());
-        throw ResourceException(msg);
+        throw ResourceException(msg, errno);
     }
     if (!is_dir)
     {
@@ -85,7 +85,7 @@ string get_data_dir()
         {
             QString msg = "Account::roots(): Cannot create " + QString(dir) + ": "
                           + QString::fromStdString(ec.message());
-            throw ResourceException(msg);
+            throw ResourceException(msg, ec.value());
         }
     }
     return data_dir;
@@ -109,22 +109,32 @@ AccountImpl::AccountImpl(weak_ptr<Runtime> const& runtime,
 
 QString AccountImpl::owner() const
 {
+    runtime();  // Throws RuntimeDestroyedException if runtime was destroyed.
     return owner_;
 }
 
 QString AccountImpl::owner_id() const
 {
+    runtime();  // Throws RuntimeDestroyedException if runtime was destroyed.
     return owner_id_;
 }
 
 QString AccountImpl::description() const
 {
+    runtime();  // Throws RuntimeDestroyedException if runtime was destroyed.
     return description_;
 }
 
 QFuture<QVector<Root::SPtr>> AccountImpl::roots()
 {
-    using namespace boost::filesystem;
+    try
+    {
+        runtime();  // Throws RuntimeDestroyedException if runtime was destroyed.
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        return make_exceptional_future<QVector<Root::SPtr>>(e);
+    }
 
     if (!roots_.isEmpty())
     {
@@ -132,6 +142,9 @@ QFuture<QVector<Root::SPtr>> AccountImpl::roots()
     }
 
     // Create the root on first access.
+
+    using namespace boost::filesystem;
+
     auto rpath = canonical(get_data_dir()).native();
     auto root = RootImpl::make_root(QString::fromStdString(rpath), public_instance_);
     roots_.append(root);

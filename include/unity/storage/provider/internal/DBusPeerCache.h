@@ -20,8 +20,13 @@
 #pragma once
 
 #include <boost/thread/future.hpp>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wctor-dtor-privacy"
+#pragma GCC diagnostic ignored "-Wswitch-default"
 #include <QDBusConnection>
 #include <QDBusPendingReply>
+#pragma GCC diagnostic pop
 #include <QString>
 
 #include <functional>

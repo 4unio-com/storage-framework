@@ -2,7 +2,7 @@
 
 set -eu
 
-soversion=$(sh ./get-provider-soversion.sh)
+soversion=$(sh ./tools/get-provider-soversion.sh)
 
 infile=./debian/control.in
 outfile=./debian/control

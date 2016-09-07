@@ -21,6 +21,7 @@
 #include "ProviderInterface.h"
 #include <unity/storage/qt/client/internal/remote_client/FileImpl.h>
 #include <unity/storage/qt/client/internal/remote_client/Handler.h>
+#include <unity/storage/qt/client/internal/remote_client/validate.h>
 #include <unity/storage/qt/client/Uploader.h>
 
 #include <cassert>
@@ -46,19 +47,19 @@ UploaderImpl::UploaderImpl(QString const& upload_id,
                            QString const& old_etag,
                            weak_ptr<Root> root,
                            shared_ptr<ProviderInterface> const& provider)
-    : UploaderBase(old_etag == "" ? ConflictPolicy::overwrite : ConflictPolicy::error_if_conflict)
+    : UploaderBase(old_etag == "" ? ConflictPolicy::overwrite : ConflictPolicy::error_if_conflict, size)
     , upload_id_(upload_id)
     , fd_(fd)
-    , size_(size)
     , old_etag_(old_etag)
-    , root_(root)
+    , root_(root.lock())
     , provider_(provider)
-    , write_socket_(new QLocalSocket)
+    , write_socket_(new QLocalSocket, [](QLocalSocket* s){ s->deleteLater(); })
+    , state_(uploading)
 {
     assert(!upload_id.isEmpty());
     assert(fd.isValid());
     assert(size >= 0);
-    assert(root_.lock());
+    assert(root_);
     assert(provider);
     assert(fd.isValid());
     write_socket_->setSocketDescriptor(fd_.fileDescriptor(), QLocalSocket::ConnectedState, QIODevice::WriteOnly);
@@ -66,7 +67,10 @@ UploaderImpl::UploaderImpl(QString const& upload_id,
 
 UploaderImpl::~UploaderImpl()
 {
-    cancel();
+    if (state_ == uploading)
+    {
+        provider_->CancelUpload(upload_id_);
+    }
 }
 
 shared_ptr<QLocalSocket> UploaderImpl::socket() const
@@ -76,40 +80,51 @@ shared_ptr<QLocalSocket> UploaderImpl::socket() const
 
 QFuture<shared_ptr<File>> UploaderImpl::finish_upload()
 {
+    state_ = finalized;
+
     auto reply = provider_->FinishUpload(upload_id_);
     auto process_reply = [this](decltype(reply) const& reply, QFutureInterface<shared_ptr<File>>& qf)
     {
-        auto root = root_.lock();
-        if (!root)
+        auto md = reply.value();
+        try
         {
-            make_exceptional_future(qf, RuntimeDestroyedException("Uploader::finish_upload()"));
+            validate("Uploader::finish_upload()", md);
+        }
+        catch (StorageException const& e)
+        {
+            qf.reportException(e);
+            qf.reportFinished();
             return;
         }
-
-        auto md = reply.value();
         if (md.type != ItemType::file)
         {
             // TODO: log server error here
             QString msg = "Uploader::finish_upload(): impossible item type returned by server: "
                           + QString::number(int(md.type));
-            make_exceptional_future(qf, LocalCommsException(msg));
+            qf.reportException(LocalCommsException(msg));
+            qf.reportFinished();
             return;
         }
-        make_ready_future(qf, FileImpl::make_file(md, root));
+        qf.reportResult(FileImpl::make_file(md, root_));
+        qf.reportFinished();
     };
 
+    write_socket_->disconnectFromServer();
     auto handler = new Handler<shared_ptr<File>>(this, reply, process_reply);
     return handler->future();
 }
 
 QFuture<void> UploaderImpl::cancel() noexcept
 {
+    state_ = finalized;
+
     auto reply = provider_->CancelUpload(upload_id_);
-    auto process_reply = [this](decltype(reply) const&, QFutureInterface<void>&)
+    auto process_reply = [this](decltype(reply) const&, QFutureInterface<void>& qf)
     {
-        make_ready_future();
+        qf.reportFinished();
     };
 
+    write_socket_->abort();
     auto handler = new Handler<void>(this, reply, process_reply);
     return handler->future();
 }

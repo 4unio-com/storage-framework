@@ -34,11 +34,6 @@ namespace client
 namespace internal
 {
 
-RuntimeBase::RuntimeBase()
-    : destroyed_(false)
-{
-}
-
 void RuntimeBase::set_public_instance(weak_ptr<Runtime> p)
 {
     assert(p.lock());

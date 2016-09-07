@@ -77,7 +77,7 @@ public:
 
     typedef std::shared_ptr<Account> SPtr;
 
-    Runtime* runtime() const;
+    std::shared_ptr<Runtime> runtime() const;
 
     QString owner() const;
     QString owner_id() const;

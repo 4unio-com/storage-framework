@@ -25,6 +25,8 @@
 #include <QFuture>
 #pragma GCC diagnostic pop
 
+#include <cassert>
+
 using namespace std;
 
 namespace unity
@@ -38,9 +40,16 @@ namespace client
 namespace internal
 {
 
-UploaderBase::UploaderBase(ConflictPolicy policy)
+UploaderBase::UploaderBase(ConflictPolicy policy, int64_t size)
     : policy_(policy)
+    , size_(size)
 {
+    assert(size >= 0);
+}
+
+int64_t UploaderBase::size() const
+{
+    return size_;
 }
 
 }  // namespace internal

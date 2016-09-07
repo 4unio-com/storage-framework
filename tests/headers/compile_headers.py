@@ -55,11 +55,6 @@ import sys
 import tempfile
 import concurrent.futures, multiprocessing
 
-# Additional #defines that should be set before including a header.
-# This is intended for things such as enabling additional features
-# that are conditionally compiled in the source.
-extra_defines =[]
-
 #
 # Write the supplied message to stderr, preceded by the program name.
 #
@@ -77,13 +72,13 @@ def message(msg):
 # and check exit status from the compiler. Throw if the compile command itself fails,
 # return False if the compile command worked but reported errors, True if the compile succeeded.
 #
-def run_compiler(hdr, compiler, copts, verbose, hdr_dir):
+def run_compiler(hdr, compiler, copts, define, verbose, hdr_dir):
     try:
         src = tempfile.NamedTemporaryFile(suffix='.cpp', dir='.')
 
-        # Add any extra defines at the beginning of the temporary file.
-        for flag in extra_defines:
-            src.write(bytes("#define " + flag + "" + "\n", 'UTF-8'))
+        # Add any extra defines to the command line.
+        for flag in define:
+            copts = "-D" + flag + " " + copts
 
         src.write(bytes("#include <" + hdr + ">" + "\n", 'UTF-8'))
         src.flush()                                                 # Need this to make the file visible
@@ -119,10 +114,10 @@ def run_compiler(hdr, compiler, copts, verbose, hdr_dir):
 # and then try to compile the header. Returns normally if all files could be compiled successfully and
 # throws, otherwise.
 #
-def test_files(hdrs, compiler, copts, verbose, hdr_dir):
+def test_files(hdrs, compiler, copts, define, verbose, hdr_dir):
     num_errs = 0
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
-    futures = [executor.submit(run_compiler, h, compiler, copts, verbose, hdr_dir) for h in hdrs]
+    futures = [executor.submit(run_compiler, h, compiler, copts, define, verbose, hdr_dir) for h in hdrs]
     for f in futures:
         try:
             if not f.result():
@@ -144,10 +139,12 @@ def run():
     #
     parser = argparse.ArgumentParser(description = 'Test that all headers in the passed directory compile stand-alone.')
     parser.add_argument('-v', '--verbose', action='store_true', help = 'Trace invocations of the compiler')
+    parser.add_argument('-D', '--define', action='append', default=[],
+                        help = 'Additional -D directives to be added to the compiler command line')
     parser.add_argument('dir', nargs = 1, help = 'The directory to look for header files ending in ".h"')
     parser.add_argument('compiler', nargs = 1, help = 'The compiler executable, such as "gcc"')
     parser.add_argument('copts', nargs = '?', default="",
-                        help = 'The compiler options (excluding -c), such as "-g -Wall -I." as a single string.')
+                        help = 'The compiler options (excluding -c), such as "-g -Wall -I.", as a single string')
     args = parser.parse_args()
 
     #
@@ -163,7 +160,7 @@ def run():
     hdrs = [hdr for hdr in files if hdr.endswith('.h')]
 
     try:
-        test_files(hdrs, args.compiler[0], args.copts, args.verbose, hdr_dir)
+        test_files(hdrs, args.compiler[0], args.copts, args.define, args.verbose, hdr_dir)
     except OSError:
         sys.exit(1)    # Errors were written earlier
 

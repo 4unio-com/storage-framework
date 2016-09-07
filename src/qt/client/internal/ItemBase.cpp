@@ -18,7 +18,9 @@
 
 #include <unity/storage/qt/client/internal/ItemBase.h>
 
+#include <unity/storage/qt/client/Account.h>
 #include <unity/storage/qt/client/Exceptions.h>
+#include <unity/storage/qt/client/Root.h>
 
 #include <cassert>
 
@@ -46,21 +48,24 @@ ItemBase::~ItemBase() = default;
 
 QString ItemBase::native_identity() const
 {
+    throw_if_destroyed("Item::native_identity()");
     return identity_;
 }
 
 ItemType ItemBase::type() const
 {
+    throw_if_destroyed("Item::type()");
     return type_;
 }
 
-Root* ItemBase::root() const
+shared_ptr<Root> ItemBase::root() const
 {
-    if (auto r = root_.lock())
+    auto root = get_root();
+    if (!root)
     {
-        return r.get();
+        throw RuntimeDestroyedException("Item::root()");
     }
-    throw RuntimeDestroyedException("Item::root()");
+    return root;
 }
 
 void ItemBase::set_root(std::weak_ptr<Root> root)
@@ -73,6 +78,36 @@ void ItemBase::set_public_instance(std::weak_ptr<Item> p)
 {
     assert(p.lock());
     public_instance_ = p;
+}
+
+shared_ptr<Root> ItemBase::get_root() const noexcept
+{
+    try
+    {
+        auto root = root_.lock();
+        if (root)
+        {
+            root->account();  // Throws if either account or runtime has been destroyed.
+            return root;
+        }
+    }
+    catch (RuntimeDestroyedException const&)
+    {
+    }
+    return nullptr;
+}
+
+void ItemBase::throw_if_destroyed(QString const& method) const
+{
+    if (deleted_)
+    {
+        QString msg = method + ": \"" + identity_ + "\" was deleted previously";
+        throw DeletedException(msg, identity_);
+    }
+    if (!get_root())
+    {
+        throw RuntimeDestroyedException(method);
+    }
 }
 
 }  // namespace internal

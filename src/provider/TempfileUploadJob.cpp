@@ -40,6 +40,11 @@ TempfileUploadJob::TempfileUploadJob(string const& upload_id)
 
 TempfileUploadJob::~TempfileUploadJob() = default;
 
+void TempfileUploadJob::drain()
+{
+    static_cast<internal::TempfileUploadJobImpl*>(p_)->drain();
+}
+
 string TempfileUploadJob::file_name() const
 {
     return static_cast<internal::TempfileUploadJobImpl*>(p_)->file_name();

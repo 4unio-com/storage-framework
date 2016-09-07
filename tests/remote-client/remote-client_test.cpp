@@ -19,6 +19,8 @@
 #include <unity/storage/qt/client/client-api.h>
 
 #include <utils/DBusEnvironment.h>
+#include <utils/ProviderFixture.h>
+#include <MockProvider.h>
 
 #include <gtest/gtest.h>
 #include <QCoreApplication>
@@ -38,9 +40,9 @@ using namespace unity::storage;
 using namespace unity::storage::qt::client;
 using namespace std;
 
+// Yes, that's ridiculously long, but the builders in Jenkins and the CI Train
+// are stupifyingly slow at times.
 static constexpr int SIGNAL_WAIT_TIME = 30000;
-
-// Bunch of helper function to reduce the amount of noise in the tests.
 
 class RemoteClientTest : public ::testing::Test
 {
@@ -73,91 +75,109 @@ class FolderTest : public RemoteClientTest {};
 class FileTest : public RemoteClientTest {};
 class ItemTest : public RemoteClientTest {};
 
+class DestroyedTest : public ProviderFixture
+{
+protected:
+    void SetUp() override
+    {
+        runtime_ = Runtime::create(connection());
+        acc_ = runtime_->make_test_account(bus_name(), object_path());
+    }
+
+    void TearDown() override
+    {
+    }
+
+    Runtime::SPtr runtime_;
+    Account::SPtr acc_;
+};
+
+// Bunch of helper functions to reduce the amount of noise in the tests.
+
+template<typename T>
+bool wait(T fut)
+{
+    QFutureWatcher<decltype(fut.result())> w;
+    QSignalSpy spy(&w, &decltype(w)::finished);
+    w.setFuture(fut);
+    bool rc = spy.wait(SIGNAL_WAIT_TIME);
+    EXPECT_TRUE(rc);
+    return rc;
+}
+
+template<>
+bool wait(QFuture<void> fut)
+{
+    QFutureWatcher<void> w;
+    QSignalSpy spy(&w, &decltype(w)::finished);
+    w.setFuture(fut);
+    bool rc = spy.wait(SIGNAL_WAIT_TIME);
+    EXPECT_TRUE(rc);
+    return rc;
+}
+
+template <typename T>
+T call(QFuture<T> fut)
+{
+    if (!wait(fut))
+    {
+        throw runtime_error("call timed out");
+    }
+    return fut.result();
+}
+
+template <>
+void call(QFuture<void> fut)
+{
+    if (!wait(fut))
+    {
+        throw runtime_error("call timed out");
+    }
+    fut.waitForFinished();
+}
+
 Account::SPtr get_account(Runtime::SPtr const& runtime)
 {
-    auto accounts_fut = runtime->accounts();
-    QFutureWatcher<QVector<Account::SPtr>> w;
-    QSignalSpy spy(&w, &decltype(w)::finished);
-    w.setFuture(accounts_fut);
-    assert(spy.wait(SIGNAL_WAIT_TIME));
-
-    auto accounts = accounts_fut.result();
+    auto accounts = call(runtime->accounts());
     if (accounts.size() == 0)
     {
         qCritical() << "Cannot find any online account";
         qCritical() << "Configure at least one online account for a provider in System Settings -> Online Accounts";
         return nullptr;
     }
-    return accounts[0];
+    for (auto acc : accounts)
+    {
+        if (acc->owner_id() == "google-drive-scope")
+        {
+            return acc;
+        }
+    }
+    abort();  // Impossible
 }
 
 Root::SPtr get_root(Runtime::SPtr const& runtime)
 {
     auto acc = get_account(runtime);
-    auto roots_fut = acc->roots();
-    {
-        QFutureWatcher<QVector<Root::SPtr>> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(roots_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto roots = roots_fut.result();
-    assert(roots.size() >= 1);
+    auto roots = call(acc->roots());
+    assert(roots.size() == 1);
     return roots[0];
 }
 
 Folder::SPtr get_parent(Item::SPtr const& item)
 {
     assert(item->type() != ItemType::root);
-    auto parents_fut = item->parents();
-    {
-        QFutureWatcher<QVector<Folder::SPtr>> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(parents_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto parents = parents_fut.result();
+    auto parents = call(item->parents());
     assert(parents.size() >= 1);
     return parents[0];
 }
 
 void clear_folder(Folder::SPtr const& folder)
 {
-    auto list_fut = folder->list();
-    {
-        QFutureWatcher<QVector<Item::SPtr>> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(list_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto items = list_fut.result();
+    auto items = call(folder->list());
     assert(items.size() != 0);  // TODO: temporary hack for use with demo provider
     for (auto i : items)
     {
-        auto delete_fut = i->delete_item();
-        QFutureWatcher<void> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(delete_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-}
-
-bool content_matches(File::SPtr const& file, QByteArray const& expected)
-{
-    QFile f(file->native_identity());
-    assert(f.open(QIODevice::ReadOnly));
-    QByteArray buf = f.readAll();
-    return buf == expected;
-}
-
-void write_file(Folder::SPtr const& folder, QString const& name, QByteArray const& contents)
-{
-    QString ofile = folder->native_identity() + "/" + name;
-    QFile f(ofile);
-    assert(f.open(QIODevice::Truncate | QIODevice::WriteOnly));
-    if (!contents.isEmpty())
-    {
-        assert(f.write(contents));
+        call(i->delete_item());
     }
 }
 
@@ -173,10 +193,10 @@ TEST_F(RuntimeTest, basic)
     auto runtime = Runtime::create(connection());
 
     auto acc = get_account(runtime);
-    EXPECT_EQ(runtime.get(), acc->runtime());
-    qDebug() << "owner:      " << acc->owner();
-    qDebug() << "owner ID:   " << acc->owner_id();
-    qDebug() << "description:" << acc->description();
+    EXPECT_EQ(runtime, acc->runtime());
+    EXPECT_EQ("", acc->owner());
+    EXPECT_EQ("google-drive-scope", acc->owner_id());
+    EXPECT_EQ("Fake google account", acc->description());
 }
 
 TEST_F(RuntimeTest, roots)
@@ -185,14 +205,7 @@ TEST_F(RuntimeTest, roots)
 
     auto acc = get_account(runtime);
     ASSERT_NE(nullptr, acc);
-    auto roots_fut = acc->roots();
-    {
-        QFutureWatcher<QVector<Root::SPtr>> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(roots_fut);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto roots = roots_fut.result();
+    auto roots = call(acc->roots());
     ASSERT_GE(roots.size(), 0);
     EXPECT_EQ("root_id", roots[0]->native_identity());
 }
@@ -204,47 +217,26 @@ TEST_F(RootTest, basic)
     auto acc = get_account(runtime);
     auto root = get_root(runtime);
     EXPECT_EQ("root_id", root->native_identity());
-    EXPECT_EQ(acc.get(), root->account());
+    EXPECT_EQ(acc, root->account());
     EXPECT_EQ(ItemType::root, root->type());
     EXPECT_EQ("Root", root->name());
     EXPECT_NE("", root->etag());
 
-    auto parents = root->parents().result();
+    auto parents = call(root->parents());
     EXPECT_TRUE(parents.isEmpty());
     EXPECT_TRUE(root->parent_ids().isEmpty());
 
     // get(<root-ID>) must return the root.
-    auto get_fut = root->get(root->native_identity());
-    {
-        QFutureWatcher<Item::SPtr> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(get_fut);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto item = get_fut.result();
+    auto item = call(root->get(root->native_identity()));
     EXPECT_NE(nullptr, dynamic_pointer_cast<Root>(item));
     EXPECT_TRUE(root->equal_to(item));
 
     // Free and used space can be anything, but must be > 0.
-    auto free_space_fut = root->free_space_bytes();
-    {
-        QFutureWatcher<int64_t> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(free_space_fut);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto free_space = free_space_fut.result();
+    auto free_space = call(root->free_space_bytes());
     cerr << "bytes free: " << free_space << endl;
     EXPECT_GT(free_space, 0);
 
-    auto used_space_fut = root->used_space_bytes();
-    {
-        QFutureWatcher<int64_t> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(free_space_fut);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto used_space = used_space_fut.result();
+    auto used_space = call(root->used_space_bytes());
     cerr << "bytes used: " << used_space << endl;
     EXPECT_GT(used_space, 0);
 }
@@ -253,795 +245,894 @@ TEST_F(FolderTest, basic)
 {
     auto runtime = Runtime::create(connection());
 
-    auto acc = get_account(runtime);
     auto root = get_root(runtime);
     clear_folder(root);
 
-    auto list_fut = root->list();
-    {
-        QFutureWatcher<QVector<Item::SPtr>> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(list_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto items = list_fut.result();
+    auto items = call(root->list());
     ASSERT_EQ(1, items.size());
 
     // Create a file and check that it was created with correct type, name, and size 0.
-    auto create_file_fut = root->create_file("file1", 0);
-    {
-        QFutureWatcher<Uploader::SPtr> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(create_file_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto uploader = create_file_fut.result();
-    auto finish_upload_fut = uploader->finish_upload();
-    {
-        QFutureWatcher<File::SPtr> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(finish_upload_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto file = finish_upload_fut.result();
+    auto uploader = call(root->create_file("file1", 10));
+    EXPECT_EQ(10, uploader->size());
+    auto file = call(uploader->finish_upload());
     EXPECT_EQ(ItemType::file, file->type());
     EXPECT_EQ("some_upload", file->name());
-    EXPECT_EQ(0, file->size());
+    EXPECT_EQ(10, file->size());
     EXPECT_EQ("some_id", file->native_identity());
 
     // For coverage: getting a file must return the correct one.
-    auto get_fut = root->get("child_id");
-    {
-        QFutureWatcher<Item::SPtr> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(get_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    file = dynamic_pointer_cast<File>(get_fut.result());
+    file = dynamic_pointer_cast<File>(call(root->get("child_id")));
     EXPECT_EQ("child_id", file->native_identity());
     EXPECT_EQ("Child", file->name());
-
-#if 0
-    // Create a folder and check that it was created with correct type and name.
-    auto create_folder_fut = root->create_folder("folder1");
-    {
-        QFutureWatcher<Folder::SPtr> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(create_folder_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    EXPECT_EQ(ItemType::folder, folder->type());
-    EXPECT_EQ("folder1", folder->name());
-    EXPECT_EQ(root->native_identity() + "/folder1", folder->native_identity());
-
-    // Check that we can find both file1 and folder1.
-    auto item = root->lookup("file1").result();
-    file = dynamic_pointer_cast<File>(item);
-    ASSERT_NE(nullptr, file);
-    EXPECT_EQ("file1", file->name());
-    EXPECT_EQ(0, file->size());
-
-    item = root->lookup("folder1").result();
-    folder = dynamic_pointer_cast<Folder>(item);
-    ASSERT_NE(nullptr, folder);
-    ASSERT_EQ(nullptr, dynamic_pointer_cast<Root>(folder));
-    EXPECT_EQ("folder1", folder->name());
-
-    // Check that list() returns file1 and folder1.
-    items = root->list();
-    ASSERT_EQ(2, items.size());
-    auto left = items[0];
-    auto right = items[1];
-    ASSERT_TRUE((dynamic_pointer_cast<File>(left) && dynamic_pointer_cast<Folder>(right))
-                ||
-                (dynamic_pointer_cast<File>(right) && dynamic_pointer_cast<Folder>(left)));
-    if (dynamic_pointer_cast<File>(left))
-    {
-        file = dynamic_pointer_cast<File>(left);
-        folder = dynamic_pointer_cast<Folder>(right);
-    }
-    else
-    {
-        file = dynamic_pointer_cast<File>(right);
-        folder = dynamic_pointer_cast<Folder>(left);
-    }
-    EXPECT_EQ("file1", file->name());
-    EXPECT_EQ("folder1", folder->name());
-    EXPECT_TRUE(file->root()->equal_to(root));
-    EXPECT_TRUE(folder->root()->equal_to(root));
-
-    // Parent of both file and folder must be the root.
-    EXPECT_TRUE(root->equal_to(get_parent(file)));
-    EXPECT_TRUE(root->equal_to(get_parent(folder)));
-    EXPECT_EQ(root->native_identity(), file->parent_ids()[0]);
-    EXPECT_EQ(root->native_identity(), folder->parent_ids()[0]);
-
-    // Destroy the file and check that only the directory is left.
-    file->delete_item().waitForFinished();
-    items = root->list().result();
-    ASSERT_EQ(1, items.size());
-    folder = dynamic_pointer_cast<Folder>(items[0]);
-    ASSERT_NE(nullptr, folder);
-    EXPECT_EQ("folder1", folder->name());;
-
-    // Destroy the folder and check that the root is empty.
-    folder->delete_item().waitForFinished();
-    items = root->list().result();
-    ASSERT_EQ(0, items.size());
-#endif
 }
-
-#if 0
-TEST_F(FolderTest, nested)
-{
-    auto runtime = Runtime::create(connection());
-
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    auto d1 = root->create_folder("d1").result();
-    auto d2 = d1->create_folder("d2").result();
-
-    // Parent of d2 must be d1.
-    EXPECT_TRUE(get_parent(d2)->equal_to(d1));
-    EXPECT_TRUE(d2->parent_ids()[0] == d1->native_identity());
-
-    // Destroy is recursive
-    d1->delete_item().waitForFinished();
-    auto items = root->list().result();
-    ASSERT_EQ(0, items.size());
-}
-#endif
 
 TEST_F(FileTest, upload)
 {
     auto runtime = Runtime::create(connection());
 
-    auto acc = get_account(runtime);
     auto root = get_root(runtime);
     clear_folder(root);
 
     // Get a file.
-    auto lookup_fut = root->lookup("Child");
-    {
-        QFutureWatcher<QVector<Item::SPtr>> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(lookup_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto children = lookup_fut.result();
+    auto children = call(root->lookup("Child"));
     ASSERT_EQ(1, children.size());
     auto file = dynamic_pointer_cast<File>(children[0]);
     EXPECT_EQ("child_id", file->native_identity());
     EXPECT_EQ("Child", file->name());
 
-    auto create_uploader_fut = file->create_uploader(ConflictPolicy::error_if_conflict, 0);
-    {
-        QFutureWatcher<Uploader::SPtr> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(create_uploader_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto uploader = create_uploader_fut.result();
+    auto uploader = call(file->create_uploader(ConflictPolicy::error_if_conflict, 0));
+    EXPECT_EQ(0, uploader->size());
 
-    auto finish_upload_fut = uploader->finish_upload();
-    {
-        QFutureWatcher<File::SPtr> w;
-        QSignalSpy spy(&w, &decltype(w)::finished);
-        w.setFuture(finish_upload_fut);
-        assert(spy.wait(SIGNAL_WAIT_TIME));
-    }
-    auto uploaded_file = finish_upload_fut.result();
+    auto uploaded_file = call(uploader->finish_upload());
     EXPECT_EQ("some_id", uploaded_file->native_identity());
     EXPECT_EQ("some_upload", uploaded_file->name());
-
-#if 0
-        QByteArray const contents = "Hello\n";
-        auto written = uploader->socket()->write(contents);
-        ASSERT_EQ(contents.size(), written);
-
-        auto finish_upload_fut = uploader->finish_upload();
-        {
-            QFutureWatcher<File::SPtr> w;
-            QSignalSpy spy(&w, &decltype(w)::finished);
-            w.setFuture(finish_upload_fut);
-            assert(spy.wait(SIGNAL_WAIT_TIME));
-        }
-        auto file = finish_upload_fut.result();
-    }
-
-    {
-        // Don't upload anything.
-        auto uploader = root->create_file("new_file").result();
-        auto file = uploader->file();
-        uploader->socket()->disconnectFromServer();
-
-        // We never write anything, so there is no disconnected signal from the socket.
-
-        auto state = uploader->finish_upload().result();
-        EXPECT_EQ(TransferState::ok, state);
-        ASSERT_EQ(0, uploader->file()->size());
-
-        file->delete_item().waitForFinished();
-    }
-
-    {
-        // Let the uploader go out of scope and check
-        // that the file was created regardless.
-        auto file = root->create_file("new_file").result()->file();
-        ASSERT_EQ(0, file->size());
-
-        file->delete_item().waitForFinished();
-    }
-#endif
 }
-#if 0
 
-TEST_F(FileTest, create_uploader)
+TEST_F(RootTest, root_exceptions)
 {
     auto runtime = Runtime::create(connection());
 
-    auto acc = get_account(runtime);
     auto root = get_root(runtime);
     clear_folder(root);
-
-    auto file = root->create_file("new_file").result()->file();
-
-    {
-        auto uploader = file->create_uploader(ConflictPolicy::overwrite).result();
-
-        auto finish_fut = uploader->finish_upload();
-        {
-            QFutureWatcher<TransferState> w;
-            QSignalSpy spy(&w, &decltype(w)::finished);
-            w.setFuture(finish_fut);
-            // We never disconnected from the socket, so the transfer is still in progress.
-            ASSERT_FALSE(spy.wait(SIGNAL_WAIT_TIME));
-        }
-        uploader->socket()->disconnectFromServer();
-        {
-            QFutureWatcher<TransferState> w;
-            QSignalSpy spy(&w, &decltype(w)::finished);
-            w.setFuture(finish_fut);
-            // Now that we have disconnected, the future must become ready.
-            ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-        }
-        EXPECT_EQ(TransferState::ok, finish_fut.result());
-    }
-
-    // Same test again, but this time we write a bunch of data and don't disconnect.
-    {
-        auto uploader = file->create_uploader(ConflictPolicy::overwrite).result();
-
-        std::string s(1000000, 'a');
-        uploader->socket()->write(&s[0], s.size());
-
-        auto finish_fut = uploader->finish_upload();
-        {
-            QFutureWatcher<TransferState> w;
-            QSignalSpy spy(&w, &decltype(w)::finished);
-            w.setFuture(finish_fut);
-            // We never disconnected from the socket, so the transfer is still in progress.
-            ASSERT_FALSE(spy.wait(SIGNAL_WAIT_TIME));
-        }
-        uploader->socket()->disconnectFromServer();
-        {
-            QFutureWatcher<TransferState> w;
-            QSignalSpy spy(&w, &decltype(w)::finished);
-            w.setFuture(finish_fut);
-            // Now that we have disconnected, the future must become ready.
-            ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-        }
-        EXPECT_EQ(TransferState::ok, finish_fut.result());
-    }
-
-    file->delete_item().waitForFinished();
-}
-
-TEST_F(FileTest, cancel_upload)
-{
-    auto runtime = Runtime::create(connection());
-
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    {
-        // Upload a few bytes.
-        auto uploader = root->create_file("new_file").result();
-
-        // We haven't written anything and haven't pumped the event loop,
-        // so the cancel is guaranteed to catch the uploader in the in_progress state.
-        uploader->cancel();
-        EXPECT_EQ(TransferState::cancelled, uploader->finish_upload().result());
-
-        auto file = uploader->file();
-        EXPECT_EQ(0, file->size());
-
-        file->delete_item().waitForFinished();
-    }
-
-    {
-        // Create a file with a few bytes.
-        QByteArray original_contents = "Hello World!\n";
-        write_file(root, "new_file", original_contents);
-        auto file = dynamic_pointer_cast<File>(root->lookup("new_file").result());
-        ASSERT_NE(nullptr, file);
-
-        // Create an uploader for the file and write a bunch of bytes.
-        auto uploader = file->create_uploader(ConflictPolicy::overwrite).result();
-        QByteArray const contents(1024, 'a');
-        auto written = uploader->socket()->write(contents);
-        ASSERT_EQ(contents.size(), written);
-
-        QSignalSpy spy(uploader->socket().get(), &QLocalSocket::bytesWritten);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-
-        // No disconnect here, so the transfer is still in progress. Now cancel.
-        uploader->cancel().waitForFinished();
-
-        // finish_upload() must indicate that the upload was cancelled.
-        auto state = uploader->finish_upload().result();
-        EXPECT_EQ(TransferState::cancelled, state);
-
-        // The original file contents must still be intact.
-        EXPECT_EQ(original_contents.size(), uploader->file()->size());
-        ASSERT_TRUE(content_matches(uploader->file(), original_contents));
-
-        file->delete_item().waitForFinished();
-    }
-
-    {
-        // Upload a few bytes.
-        auto uploader = root->create_file("new_file").result();
-        auto file = uploader->file();
-        QByteArray const contents = "Hello\n";
-
-        // Finish the upload.
-        auto written = uploader->socket()->write(contents);
-        ASSERT_EQ(contents.size(), written);
-        uploader->socket()->disconnectFromServer();
-
-        // Pump the event loop for a bit, so the socket can finish doing its thing.
-        QTimer timer;
-        QSignalSpy spy(&timer, &QTimer::timeout);
-        timer.start(SIGNAL_WAIT_TIME);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-
-        // Now send the cancel. The upload is finished already, and the cancel
-        // is too late, so finish_upload() must report that the upload
-        // worked OK.
-        uploader->cancel();
-        EXPECT_EQ(TransferState::ok, uploader->finish_upload().result());
-
-        file->delete_item().waitForFinished();
-    }
-}
-
-TEST_F(FileTest, upload_conflict)
-{
-    auto runtime = Runtime::create(connection());
-
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    // Make a new file.
-    auto uploader = root->create_file("new_file").result();
-    auto file = uploader->file();
-
-    // Write a few bytes.
-    QByteArray const contents = "Hello\n";
-
-    // Pump the event loop for a bit, so the socket can finish doing its thing.
-    QTimer timer;
-    QSignalSpy spy(&timer, &QTimer::timeout);
-    timer.start(SIGNAL_WAIT_TIME);
-    ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-
-    // Touch the file on disk to give it a new time stamp.
-    ASSERT_EQ(0, system((string("touch ") + file->native_identity().toStdString()).c_str()));
-
-    // Finish the upload.
-    uploader->socket()->disconnectFromServer();
 
     try
     {
-        // Must get an exception because the time stamps no longer match.
-        uploader->finish_upload().result();
+        call(root->delete_item());
         FAIL();
     }
-    catch (ConflictException const&)
+    catch (LogicException const& e)
     {
-        // TODO: check exception details.
-    }
-
-    file->delete_item().waitForFinished();
-}
-
-TEST_F(FileTest, download)
-{
-    auto runtime = Runtime::create(connection());
-
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    {
-        // Download a few bytes.
-        QByteArray const contents = "Hello\n";
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-        EXPECT_TRUE(file->equal_to(downloader->file()));
-
-        auto socket = downloader->socket();
-        QByteArray buf;
-        do
-        {
-            // Need to pump the event loop while the socket does its thing.
-            QSignalSpy spy(downloader->socket().get(), &QIODevice::readyRead);
-            ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-            auto bytes_to_read = socket->bytesAvailable();
-            buf.append(socket->read(bytes_to_read));
-        } while (buf.size() < contents.size());
-
-        // Wait for disconnected signal.
-        QSignalSpy spy(downloader->socket().get(), &QLocalSocket::disconnected);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-
-        auto state = downloader->finish_download().result();
-        EXPECT_EQ(TransferState::ok, state);
-
-        // Contents must match.
-        EXPECT_EQ(contents, buf);
+        EXPECT_EQ("Item::delete_item(): cannot delete root folder", e.error_message()) << e.what();
     }
 
     {
-        // Download exactly 64 KB.
-        QByteArray const contents(64 * 1024, 'a');
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-        EXPECT_TRUE(file->equal_to(downloader->file()));
-
-        auto socket = downloader->socket();
-        QByteArray buf;
-        do
-        {
-            // Need to pump the event loop while the socket does its thing.
-            QSignalSpy spy(downloader->socket().get(), &QIODevice::readyRead);
-            ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-            auto bytes_to_read = socket->bytesAvailable();
-            buf.append(socket->read(bytes_to_read));
-        } while (buf.size() < contents.size());
-
-        // Wait for disconnected signal.
-        QSignalSpy spy(downloader->socket().get(), &QLocalSocket::disconnected);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-
-        auto state = downloader->finish_download().result();
-        EXPECT_EQ(TransferState::ok, state);
-
-        // Contents must match
-        EXPECT_EQ(contents, buf);
-    }
-
-    {
-        // Download 1 MB + 1 bytes.
-        QByteArray const contents(1024 * 1024 + 1, 'a');
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-        EXPECT_TRUE(file->equal_to(downloader->file()));
-
-        auto socket = downloader->socket();
-        QByteArray buf;
-        do
-        {
-            // Need to pump the event loop while the socket does its thing.
-            QSignalSpy spy(downloader->socket().get(), &QIODevice::readyRead);
-            ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-            auto bytes_to_read = socket->bytesAvailable();
-            buf.append(socket->read(bytes_to_read));
-        } while (buf.size() < contents.size());
-
-        // Wait for disconnected signal.
-        QSignalSpy spy(downloader->socket().get(), &QLocalSocket::disconnected);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-
-        auto state = downloader->finish_download().result();
-        EXPECT_EQ(TransferState::ok, state);
-
-        // Contents must match
-        EXPECT_EQ(contents, buf);
-    }
-
-    {
-        // Download file containing zero bytes
-        QByteArray const contents;
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-        EXPECT_TRUE(file->equal_to(downloader->file()));
-
-        auto socket = downloader->socket();
-
-        // No readyRead every arrives in this case, just wait for disconnected.
-        QSignalSpy spy(downloader->socket().get(), &QLocalSocket::disconnected);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-
-        auto state = downloader->finish_download().result();
-        EXPECT_EQ(TransferState::ok, state);
-    }
-
-    {
-        // Don't ever call read on empty file.
-        QByteArray const contents;
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-        EXPECT_TRUE(file->equal_to(downloader->file()));
-
-        // This succeeds because the provider disconnects as soon
-        // as it realizes that there is nothing to write.
-        downloader->finish_download().result();
-    }
-
-    {
-        // Don't ever call read on non-empty file.
-        QByteArray const contents("some contents");
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-        EXPECT_TRUE(file->equal_to(downloader->file()));
-
         try
         {
-            downloader->finish_download().result();
+            call(root->get("no_such_file_id"));
             FAIL();
         }
-        catch (StorageException const&)
+        catch (NotExistsException const& e)
         {
-            // TODO: check exception details
+            EXPECT_EQ("no_such_file_id", e.key());
+        }
+    }
+}
+
+TEST_F(RuntimeTest, runtime_destroyed_exceptions)
+{
+    // Getting the runtime from an account after shutting down the runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto acc = get_account(runtime);
+        runtime->shutdown();
+        try
+        {
+            acc->runtime();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Account::runtime(): runtime was destroyed previously", e.error_message());
         }
     }
 
+    // Getting the runtime from an account after destroying the runtime must fail.
     {
-        // Let downloader go out of scope.
-        QByteArray const contents("some contents");
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-    }
-
-    {
-        // Let downloader future go out of scope.
-        QByteArray const contents("some contents");
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader_fut = file->create_downloader();
-    }
-}
-
-TEST_F(FileTest, cancel_download)
-{
-    auto runtime = Runtime::create(connection());
-
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    {
-        // Download enough bytes to prevent a single read in the provider from completing the download.
-        QByteArray const contents(1024 * 1024, 'a');
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        auto downloader = file->create_downloader().result();
-        // We haven't read anything and haven't pumped the event loop,
-        // so the cancel is guaranteed to catch the downloader in the in_progress state.
-        downloader->cancel();
-        EXPECT_EQ(TransferState::cancelled, downloader->finish_download().result());
-    }
-
-    {
-        // Download a few bytes.
-        QByteArray const contents = "Hello\n";
-        write_file(root, "file", contents);
-
-        auto item = root->lookup("file").result();
-        File::SPtr file = dynamic_pointer_cast<File>(item);
-        ASSERT_FALSE(file == nullptr);
-
-        // Finish the download.
-        auto downloader = file->create_downloader().result();
-        auto socket = downloader->socket();
-        QByteArray buf;
-        do
+        auto runtime = Runtime::create(connection());
+        auto acc = get_account(runtime);
+        runtime.reset();
+        try
         {
-            // Need to pump the event loop while the socket does its thing.
-            QSignalSpy spy(downloader->socket().get(), &QIODevice::readyRead);
-            ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
-            auto bytes_to_read = socket->bytesAvailable();
-            buf.append(socket->read(bytes_to_read));
-        } while (buf.size() < contents.size());
+            acc->runtime();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Account::runtime(): runtime was destroyed previously", e.error_message());
+        }
+    }
 
-        // Wait for disconnected signal.
-        QSignalSpy spy(downloader->socket().get(), &QLocalSocket::disconnected);
-        ASSERT_TRUE(spy.wait(SIGNAL_WAIT_TIME));
+    // Getting accounts after shutting down the runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        runtime->shutdown();
+        try
+        {
+            call(runtime->accounts());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Runtime::accounts(): runtime was destroyed previously", e.error_message());
+        }
+    }
 
-        // Now send the cancel. The download is finished already, and the cancel
-        // is too late, so finish_download() must report that the download
-        // worked OK.
-        downloader->cancel();
-        EXPECT_EQ(TransferState::ok, downloader->finish_download().result());
+    // Getting roots from an account after shutting down the runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto acc = get_account(runtime);
+        runtime->shutdown();
+        try
+        {
+            call(acc->roots());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Account::roots(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // Getting the account from a root with a destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        runtime.reset();
+        try
+        {
+            root->account();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Root::account(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // Getting the account from a root with a destroyed account must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto acc = get_account(runtime);
+        auto root = get_root(runtime);
+        runtime.reset();
+        acc.reset();
+        try
+        {
+            root->account();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Root::account(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // Getting the root from an item with a destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime.reset();
+        try
+        {
+            file->root();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::root(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // Getting the root from an item with a destroyed root must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto acc = get_account(runtime);
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime.reset();
+        acc.reset();
+        root.reset();
+        try
+        {
+            file->root();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::root(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // etag() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->etag();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::etag(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // metadata() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->metadata();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::metadata(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // last_modified_time() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->last_modified_time();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::last_modified_time(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // copy() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            call(file->copy(root, "file2"));
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::copy(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // move() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            call(file->move(root, "file2"));
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::move(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // parents() on root with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->parents());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Root::parents(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // parents() on file with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            call(file->parents());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::parents(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // parent_ids() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->parent_ids();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::parent_ids(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // parent_ids() on root with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            root->parent_ids();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Root::parent_ids(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // delete_item() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            call(file->delete_item());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::delete_item(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // delete_item() on root with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->delete_item());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::delete_item(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // creation_time() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->creation_time();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::creation_time(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // native_metadata() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->native_metadata();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::native_metadata(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // name() on root with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            root->name();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::name(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // name() on folder with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto folder = dynamic_pointer_cast<Folder>(call(root->get("child_folder_id")));
+        runtime->shutdown();
+        try
+        {
+            folder->name();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::name(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // name() on file with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->name();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Item::name(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // list() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->list());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Folder::list(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // lookup() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->lookup("file"));
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Folder::lookup(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // create_folder() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->create_folder("folder"));
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Folder::create_folder(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // create_file() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->create_file("file", 0));
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Folder::create_file(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // size() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            file->size();
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("File::size(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // create_uploader() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            call(file->create_uploader(ConflictPolicy::overwrite, 0));
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("File::create_uploader(): runtime was destroyed previously", e.error_message()) << e.what();
+        }
+    }
+
+    // create_downloader() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+        runtime->shutdown();
+        try
+        {
+            call(file->create_downloader());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("File::create_downloader(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // free_space_bytes() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->free_space_bytes());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Root::free_space_bytes(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // used_space_bytes() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->used_space_bytes());
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Root::used_space_bytes(): runtime was destroyed previously", e.error_message());
+        }
+    }
+
+    // get() with destroyed runtime must fail.
+    {
+        auto runtime = Runtime::create(connection());
+        auto root = get_root(runtime);
+        clear_folder(root);
+
+        runtime->shutdown();
+        try
+        {
+            call(root->get("some_id"));
+            FAIL();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            EXPECT_EQ("Root::get(): runtime was destroyed previously", e.error_message());
+        }
     }
 }
 
-Test_F(ItemTest, move)
+TEST_F(DestroyedTest, roots_destroyed_while_reply_outstanding)
 {
-    auto runtime = Runtime::create(connection());
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider));
 
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    // Check that rename works within the same folder.
-    auto f1 = root->create_file("f1").result()->file();
-    auto f2 = f1->move(root, "f2").result();
-    EXPECT_EQ("f2", f2->name());
-    EXPECT_THROW(f1->name(), DestroyedException);  // TODO: check exception details.
-
-    // File must be found under new name.
-    auto items = root->list().result();
-    ASSERT_EQ(1, items.size());
-    f2 = dynamic_pointer_cast<File>(items[0]);
-    ASSERT_FALSE(f2 == nullptr);
-
-    // Make a folder and move f2 into it.
-    auto folder = root->create_folder("folder").result();
-    f2 = f2->move(folder, "f2").result();
-    EXPECT_TRUE(get_parent(f2)->equal_to(folder));
-
-    // Move the folder
-    auto item = folder->move(root, "folder2").result();
-    folder = dynamic_pointer_cast<Folder>(item);
-    EXPECT_EQ("folder2", folder->name());
+    auto fut = acc_->roots();
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Account::roots(): runtime was destroyed previously", e.error_message());
+    }
 }
 
-Test_F(ItemTest, copy)
+TEST_F(DestroyedTest, get_destroyed_while_reply_outstanding)
 {
-    auto runtime = Runtime::create(connection());
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("metadata slow")));
 
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    QByteArray const contents = "hello\n";
-    write_file(root, "file", contents);
-
-    auto item = root->lookup("file").result();
-    auto copied_item = item->copy(root, "copy_of_file").result();
-    EXPECT_EQ("copy_of_file", copied_item->name());
-    File::SPtr copied_file = dynamic_pointer_cast<File>(item);
-    ASSERT_NE(nullptr, copied_file);
-    EXPECT_TRUE(content_matches(copied_file, contents));
+    auto root = call(acc_->roots())[0];
+    auto fut = root->get("root_id");
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Root::get(): runtime was destroyed previously", e.error_message());
+    }
 }
 
-Test_F(ItemTest, recursive_copy)
+TEST_F(DestroyedTest, copy_destroyed_while_reply_outstanding)
 {
-    auto runtime = Runtime::create(connection());
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider()));
 
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    // Create the following structure:
-    // folder
-    // folder/empty_folder
-    // folder/non_empty_folder
-    // folder/non_empty_folder/nested_file
-    // folder/file
-
-    string root_path = root->native_identity().toStdString();
-    ASSERT_EQ(0, mkdir((root_path + "/folder").c_str(), 0700));
-    ASSERT_EQ(0, mkdir((root_path + "/folder/empty_folder").c_str(), 0700));
-    ASSERT_EQ(0, mkdir((root_path + "/folder/non_empty_folder").c_str(), 0700));
-    ofstream(root_path + "/folder/non_empty_folder/nested_file");
-    ofstream(root_path + "/folder/file");
-
-    // Copy folder to folder2
-    auto folder = dynamic_pointer_cast<Folder>(root->lookup("folder").result());
-    ASSERT_NE(nullptr, folder);
-    auto item = folder->copy(root, "folder2").result();
-
-    // Verify that folder2 now contains the same structure as folder.
-    auto folder2 = dynamic_pointer_cast<Folder>(item);
-    ASSERT_NE(nullptr, folder2);
-    EXPECT_NO_THROW(folder2->lookup("empty_folder").result());
-    item = folder2->lookup("non_empty_folder").result();
-    auto non_empty_folder = dynamic_pointer_cast<Folder>(item);
-    ASSERT_NE(nullptr, non_empty_folder);
-    EXPECT_NO_THROW(non_empty_folder->lookup("nested_file").result());
-    EXPECT_NO_THROW(folder2->lookup("file").result());
+    auto root = call(acc_->roots())[0];
+    auto fut = root->copy(root, "new name");
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Item::copy(): runtime was destroyed previously", e.error_message());
+    }
 }
 
-Test_F(ItemTest, modified_time)
+TEST_F(DestroyedTest, move_destroyed_while_reply_outstanding)
 {
-    auto runtime = Runtime::create(connection());
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("move slow")));
 
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    auto now = QDateTime::currentDateTimeUtc();
-    // Need to sleep because time_t provides only 1-second resolution.
-    sleep(1);
-    auto file = root->create_file("file").result()->file();
-    auto t = file->last_modified_time();
-    // Rough check that the time is sane.
-    EXPECT_LE(now, t);
-    EXPECT_LE(t, now.addSecs(5));
+    auto root = call(acc_->roots())[0];
+    auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+    auto fut = file->move(root, "new name");
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Item::move(): runtime was destroyed previously", e.error_message());
+    }
 }
 
-Test_F(ItemTest, comparison)
+TEST_F(DestroyedTest, list_destroyed_while_reply_outstanding)
 {
-    auto runtime = Runtime::create(connection());
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("list slow")));
 
-    auto acc = get_account(runtime);
-    auto root = get_root(runtime);
-    clear_folder(root);
-
-    // Create two files.
-    auto file1 = root->create_file("file1").result()->file();
-    auto file2 = root->create_file("file2").result()->file();
-
-    EXPECT_FALSE(file1->equal_to(file2));
-
-    // Retrieve file1 via lookup, so we get a different proxy.
-    auto item = root->lookup("file1").result();
-    auto other_file1 = dynamic_pointer_cast<File>(item);
-    EXPECT_NE(file1, other_file1);              // Compares shared_ptr values
-    EXPECT_TRUE(file1->equal_to(other_file1));  // Deep comparison
+    auto root = call(acc_->roots())[0];
+    auto fut = root->list();
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Folder::list(): runtime was destroyed previously", e.error_message());
+    }
 }
-#endif
+
+TEST_F(DestroyedTest, lookup_destroyed_while_reply_outstanding)
+{
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("lookup slow")));
+
+    auto root = call(acc_->roots())[0];
+    auto fut = root->lookup("Child");
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Folder::lookup(): runtime was destroyed previously", e.error_message());
+    }
+}
+
+TEST_F(DestroyedTest, create_folder_destroyed_while_reply_outstanding)
+{
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("create_folder slow")));
+
+    auto root = call(acc_->roots())[0];
+    auto fut = root->create_folder("Child");
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Folder::create_folder(): runtime was destroyed previously", e.error_message());
+    }
+}
+
+TEST_F(DestroyedTest, create_file_destroyed_while_reply_outstanding)
+{
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("create_file slow")));
+
+    auto root = call(acc_->roots())[0];
+    auto fut = root->create_file("Child", 0);
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("Folder::create_file(): runtime was destroyed previously", e.error_message());
+    }
+}
+
+TEST_F(DestroyedTest, create_uploader_destroyed_while_reply_outstanding)
+{
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("create_file slow")));
+
+    auto root = call(acc_->roots())[0];
+    auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+    auto fut = file->create_uploader(ConflictPolicy::overwrite, 0);
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("File::create_uploader(): runtime was destroyed previously", e.error_message());
+    }
+}
+
+TEST_F(DestroyedTest, create_downloader_destroyed_while_reply_outstanding)
+{
+    set_provider(unique_ptr<provider::ProviderBase>(new MockProvider("create_file slow")));
+
+    auto root = call(acc_->roots())[0];
+    auto file = dynamic_pointer_cast<File>(call(root->get("child_id")));
+    auto fut = file->create_downloader();
+    runtime_->shutdown();
+    try
+    {
+        ASSERT_TRUE(wait(fut));
+        fut.result();
+        FAIL();
+    }
+    catch (RuntimeDestroyedException const& e)
+    {
+        EXPECT_EQ("File::create_downloader(): runtime was destroyed previously", e.error_message());
+    }
+}
 
 int main(int argc, char** argv)
 {

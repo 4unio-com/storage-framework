@@ -63,6 +63,8 @@ Q_SIGNALS:
     void finished();
 
 private:
+    void marshal_exception(std::exception_ptr ep);
+
     std::shared_ptr<AccountData> const account_;
     Callback const callback_;
     QDBusConnection const bus_;

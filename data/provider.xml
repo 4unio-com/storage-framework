@@ -5,14 +5,17 @@
       com.canonical.StorageFramework.Provider:
       @short_description: Interface providing access to a storage account
 
-      For methods dealing with metadata, the representation
-      "(ssssia{sv})" is used, where the struct members are:
+      For methods returning metadata, the representation
+      "(sasssia{sv})" is used, where the struct members are:
         - item_id
-        - parent_id
+        - parent_ids
         - name
         - etag
         - type (enum: file, folder, root)
         - metadata
+
+      Note that parent_ids is a sequence of IDs instead of a single ID to allow the client to
+      navigate items in Google Drive, which permits more than one parent for a file or folder.
   -->
   <interface name="com.canonical.StorageFramework.Provider">
     <!--
@@ -25,7 +28,7 @@
         of files, this list will contain a single item.
     -->
     <method name="Roots">
-      <arg type="a(ssssia{sv})" name="roots" direction="out"/>
+      <arg type="a(sasssia{sv})" name="roots" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QList&lt;unity::storage::internal::ItemMetadata&gt;"/>
     </method>
 
@@ -45,7 +48,7 @@
     <method name="List">
       <arg type="s" name="item_id" direction="in"/>
       <arg type="s" name="page_token" direction="in"/>
-      <arg type="a(ssssia{sv})" name="children" direction="out"/>
+      <arg type="a(sasssia{sv})" name="children" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QList&lt;unity::storage::internal::ItemMetadata&gt;"/>
       <arg type="s" name="next_token" direction="out"/>
     </method>
@@ -60,7 +63,7 @@
     <method name="Lookup">
       <arg type="s" name="parent_id" direction="in"/>
       <arg type="s" name="name" direction="in"/>
-      <arg type="a(ssssia{sv})" name="items" direction="out"/>
+      <arg type="a(sasssia{sv})" name="items" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QList&lt;unity::storage::internal::ItemMetadata&gt;"/>
     </method>
 
@@ -72,7 +75,7 @@
     -->
     <method name="Metadata">
       <arg type="s" name="item_id" direction="in"/>
-      <arg type="(ssssia{sv})" name="metadata" direction="out"/>
+      <arg type="(sasssia{sv})" name="metadata" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="unity::storage::internal::ItemMetadata"/>
     </method>
 
@@ -86,7 +89,7 @@
     <method name="CreateFolder">
       <arg type="s" name="parent_id" direction="in"/>
       <arg type="s" name="name" direction="in"/>
-      <arg type="(ssssia{sv})" name="metadata" direction="out"/>
+      <arg type="(sasssia{sv})" name="metadata" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="unity::storage::internal::ItemMetadata"/>
     </method>
 
@@ -160,7 +163,7 @@
     -->
     <method name="FinishUpload">
       <arg type="s" name="upload_id" direction="in"/>
-      <arg type="(ssssia{sv})" name="metadata" direction="out"/>
+      <arg type="(sasssia{sv})" name="metadata" direction="out"/>
       <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="unity::storage::internal::ItemMetadata"/>
     </method>
 

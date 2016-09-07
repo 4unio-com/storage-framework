@@ -19,6 +19,7 @@
 #include <unity/storage/qt/client/internal/local_client/RuntimeImpl.h>
 
 #include <unity/storage/qt/client/Account.h>
+#include <unity/storage/qt/client/Exceptions.h>
 #include <unity/storage/qt/client/internal/make_future.h>
 #include <unity/storage/qt/client/internal/local_client/AccountImpl.h>
 
@@ -68,14 +69,19 @@ RuntimeImpl::~RuntimeImpl()
 
 void RuntimeImpl::shutdown()
 {
-    if (destroyed_.exchange(true))
+    if (destroyed_)
     {
         return;
     }
+    destroyed_ = true;
 }
 
 QFuture<QVector<Account::SPtr>> RuntimeImpl::accounts()
 {
+    if (destroyed_)
+    {
+        return internal::make_exceptional_future<QVector<Account::SPtr>>(RuntimeDestroyedException("Runtime::accounts()"));
+    }
 
     char const* user = g_get_user_name();
     assert(*user != '\0');
@@ -100,6 +106,15 @@ QFuture<QVector<Account::SPtr>> RuntimeImpl::accounts()
     accounts_.append(acc);
     return make_ready_future(accounts_);
 }
+
+shared_ptr<Account> RuntimeImpl::make_test_account(QString const& bus_name,
+                                                   QString const& object_path)
+{
+    Q_UNUSED(bus_name);
+    Q_UNUSED(object_path);
+    throw LocalCommsException("Can not create test account with local client");
+}
+
 
 }  // namespace local_client
 }  // namespace internal

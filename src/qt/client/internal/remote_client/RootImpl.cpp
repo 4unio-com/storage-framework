@@ -21,6 +21,7 @@
 #include "ProviderInterface.h"
 #include <unity/storage/qt/client/internal/remote_client/FileImpl.h>
 #include <unity/storage/qt/client/internal/remote_client/Handler.h>
+#include <unity/storage/qt/client/internal/remote_client/validate.h>
 
 #include <cassert>
 
@@ -50,62 +51,116 @@ RootImpl::RootImpl(storage::internal::ItemMetadata const& md, weak_ptr<Account> 
 
 QFuture<QVector<Folder::SPtr>> RootImpl::parents() const
 {
+    try
+    {
+        throw_if_destroyed("Root::parents()");
+    }
+    catch (StorageException const& e)
+    {
+        return make_exceptional_future<QVector<Folder::SPtr>>(e);
+    }
     return make_ready_future(QVector<Folder::SPtr>());  // For the root, we return an empty vector.
 }
 
 QVector<QString> RootImpl::parent_ids() const
 {
+    throw_if_destroyed("Root::parent_ids()");
     return QVector<QString>();  // For the root, we return an empty vector.
 }
 
 QFuture<void> RootImpl::delete_item()
 {
+    try
+    {
+        throw_if_destroyed("Item::delete_item()");
+    }
+    catch (StorageException const& e)
+    {
+        return make_exceptional_future<QVector<Folder::SPtr>>(e);
+    }
     // Cannot delete root.
-    return make_exceptional_future(LogicException("Root::delete_item(): root item cannot be deleted"));
+    return make_exceptional_future(LogicException("Item::delete_item(): cannot delete root folder"));
 }
 
 QFuture<int64_t> RootImpl::free_space_bytes() const
 {
+    try
+    {
+        throw_if_destroyed("Root::free_space_bytes()");
+    }
+    catch (StorageException const& e)
+    {
+        return make_exceptional_future<int64_t>(e);
+    }
     // TODO, need to refresh metadata here instead.
     return make_ready_future(int64_t(1));
 }
 
 QFuture<int64_t> RootImpl::used_space_bytes() const
 {
+    try
+    {
+        throw_if_destroyed("Root::used_space_bytes()");
+    }
+    catch (StorageException const& e)
+    {
+        return make_exceptional_future<int64_t>(e);
+    }
     // TODO, need to refresh metadata here instead.
     return make_ready_future(int64_t(1));
 }
 
 QFuture<Item::SPtr> RootImpl::get(QString native_identity) const
 {
-    auto prov = provider();
-    if (!prov)
+    try
     {
-        return make_exceptional_future<Item::SPtr>(RuntimeDestroyedException("Root::get()"));
+        throw_if_destroyed("Root::get()");
     }
+    catch (StorageException const& e)
+    {
+        return make_exceptional_future<Item::SPtr>(e);
+    }
+
+    auto prov = provider();
     auto reply = prov->Metadata(native_identity);
 
     auto process_reply = [this](decltype(reply) const& reply, QFutureInterface<Item::SPtr>& qf)
     {
-        auto account = account_.lock();
-        if (!account)
+        shared_ptr<Account> acc;
+        try
         {
-            make_exceptional_future<Item::SPtr>(qf, RuntimeDestroyedException("Root::get()"));
+            acc = account();
+        }
+        catch (RuntimeDestroyedException const&)
+        {
+            qf.reportException(RuntimeDestroyedException("Root::get()"));
+            qf.reportFinished();
             return;
         }
 
         auto md = reply.value();
+        try
+        {
+            validate("Root::get()", md);
+        }
+        catch (StorageException const& e)
+        {
+            qf.reportException(e);
+            qf.reportFinished();
+            return;
+        }
         Item::SPtr item;
         if (md.type == ItemType::root)
         {
-            item = make_root(md, account);
+            item = make_root(md, acc);
         }
         else
         {
-            assert(root_.lock());  // Account owns the root, so it can't go away.
+            // acc owns the root, so the root weak_ptr is guaranteed to be lockable.
             item = ItemImpl::make_item(md, root_);
         }
-        make_ready_future(qf, item);
+        qf.reportResult(item);
+        qf.reportFinished();
     };
 
     auto handler = new Handler<Item::SPtr>(const_cast<RootImpl*>(this), reply, process_reply);

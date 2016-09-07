@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Canonical Ltd
+ * Copyright (C) 2015 Canonical Ltd
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License version 3 as
@@ -18,6 +18,13 @@
 
 #pragma once
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wctor-dtor-privacy"
+#pragma GCC diagnostic ignored "-Wswitch-default"
+#include <QDebug>
+#pragma GCC diagnostic pop
+
 namespace unity
 {
 namespace storage
@@ -25,7 +32,15 @@ namespace storage
 namespace internal
 {
 
-static char constexpr CREATION_TIME[] = "creation_time";
+class TraceMessageHandler final
+{
+public:
+    TraceMessageHandler(std::string const& prog_name);
+    ~TraceMessageHandler();
+
+private:
+    QtMessageHandler old_message_handler_;
+};
 
 }  // namespace internal
 }  // namespace storage

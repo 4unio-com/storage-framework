@@ -17,6 +17,8 @@
  */
 
 #include <unity/storage/provider/DownloadJob.h>
+#include <unity/storage/provider/Exceptions.h>
+#include <unity/storage/provider/metadata_keys.h>
 #include <unity/storage/provider/ProviderBase.h>
 #include <unity/storage/provider/Server.h>
 #include <unity/storage/provider/TempfileUploadJob.h>
@@ -32,47 +34,8 @@ using namespace unity::storage;
 using namespace unity::storage::provider;
 using namespace std;
 
-#if BOOST_VERSION >= 105600
 using boost::make_ready_future;
 using boost::make_exceptional_future;
-#else
-namespace
-{
-
-boost::future<void> make_ready_future()
-{
-    boost::promise<void> p;
-    p.set_value();
-    return p.get_future();
-}
-
-template <typename T>
-boost::future<T> make_ready_future(T& value)
-{
-    boost::promise<T> p;
-    p.set_value(value);
-    return p.get_future();
-}
-
-template <typename T>
-boost::future<T> make_ready_future(T&& value)
-{
-    boost::promise<T> p;
-    p.set_value(std::move(value));
-    return p.get_future();
-}
-
-template <typename T, typename E>
-boost::future<T> make_exceptional_future(E const& ex)
-{
-    boost::promise<T> p;
-    p.set_exception(boost::copy_exception(ex));
-    return p.get_future();
-}
-
-}
-#endif
-
 
 class MyProvider : public ProviderBase
 {
@@ -140,7 +103,7 @@ boost::future<ItemList> MyProvider::roots(Context const& ctx)
     printf("roots() called by %s (%d)\n", ctx.security_label.c_str(), ctx.pid);
     fflush(stdout);
     ItemList roots = {
-        {"root_id", "", "Root", "etag", ItemType::root, {}},
+        {"root_id", {}, "Root", "etag", ItemType::root, {}},
     };
     return make_ready_future<ItemList>(roots);
 }
@@ -153,14 +116,20 @@ boost::future<tuple<ItemList,string>> MyProvider::list(
     fflush(stdout);
     if (item_id != "root_id")
     {
-        return make_exceptional_future<tuple<ItemList,string>>(runtime_error("unknown folder"));
+        string msg = string("Item::list(): no such item: \"") + item_id + "\"";
+        return make_exceptional_future<tuple<ItemList,string>>(NotExistsException(msg, item_id));
     }
     if (page_token != "")
     {
-        return make_exceptional_future<tuple<ItemList,string>>(runtime_error("unknown page token"));
+        string msg = string("Item::list(): invalid page token: \"") + page_token + "\"";
+        return make_exceptional_future<tuple<ItemList,string>>(LogicException(msg));
     }
-    ItemList children = {
-        {"child_id", "root_id", "Child", "etag", ItemType::file, {}}
+    ItemList children =
+    {
+        {
+            "child_id", { "root_id" }, "Child", "etag", ItemType::file,
+            { { SIZE_IN_BYTES, 0 }, { LAST_MODIFIED_TIME, "2007-04-05T14:30Z" } }
+        }
     };
     boost::promise<tuple<ItemList,string>> p;
     p.set_value(make_tuple(children, string()));
@@ -172,12 +141,20 @@ boost::future<ItemList> MyProvider::lookup(
 {
     printf("lookup('%s', '%s') called by %s (%d)\n", parent_id.c_str(), name.c_str(), ctx.security_label.c_str(), ctx.pid);
     fflush(stdout);
-    if (parent_id != "root_id" || name != "Child")
+    if (parent_id != "root_id")
     {
-        return make_exceptional_future<ItemList>(runtime_error("file not found"));
+        string msg = string("Folder::lookup(): no such item: \"") + parent_id + "\"";
+        return make_exceptional_future<ItemList>(NotExistsException(msg, parent_id));
     }
-    ItemList children = {
-        {"child_id", "root_id", "Child", "etag", ItemType::file, {}}
+    if (name != "Child")
+    {
+        string msg = string("Folder::lookup(): no such item: \"") + name + "\"";
+        return make_exceptional_future<ItemList>(NotExistsException(msg, name));
+    }
+    ItemList children =
+    {
+        { "child_id", { "root_id" }, "Child", "etag", ItemType::file,
+          { { SIZE_IN_BYTES, 0 }, { LAST_MODIFIED_TIME, "2007-04-05T14:30Z" } } }
     };
     return make_ready_future<ItemList>(children);
 }
@@ -189,15 +166,24 @@ boost::future<Item> MyProvider::metadata(string const& item_id,
     fflush(stdout);
     if (item_id == "root_id")
     {
-        Item metadata{"root_id", "", "Root", "etag", ItemType::root, {}};
+        Item metadata{"root_id", {}, "Root", "etag", ItemType::root, {}};
         return make_ready_future<Item>(metadata);
     }
     else if (item_id == "child_id")
     {
-        Item metadata{"child_id", "root_id", "Child", "etag", ItemType::file, {}};
+        Item metadata
+        {
+            "child_id", { "root_id" }, "Child", "etag", ItemType::file,
+            { { SIZE_IN_BYTES, 0 }, { LAST_MODIFIED_TIME, "2007-04-05T14:30Z" } }
+        };
         return make_ready_future<Item>(metadata);
     }
-    return make_exceptional_future<Item>(runtime_error("no such file"));
+    else if (item_id == "child_folder_id")
+    {
+        Item metadata{"child_folder_id", { "root_id" }, "Child_Folder", "etag", ItemType::folder, {}};
+        return make_ready_future<Item>(metadata);
+    }
+    return make_exceptional_future<Item>(NotExistsException("metadata(): no such item: " + item_id, item_id));
 }
 
 boost::future<Item> MyProvider::create_folder(
@@ -206,7 +192,7 @@ boost::future<Item> MyProvider::create_folder(
 {
     printf("create_folder('%s', '%s') called by %s (%d)\n", parent_id.c_str(), name.c_str(), ctx.security_label.c_str(), ctx.pid);
     fflush(stdout);
-    Item metadata{"new_folder_id", parent_id, name, "etag", ItemType::folder, {}};
+    Item metadata{"new_folder_id", { parent_id }, name, "etag", ItemType::folder, {}};
     return make_ready_future<Item>(metadata);
 }
 
@@ -242,7 +228,12 @@ boost::future<unique_ptr<DownloadJob>> MyProvider::download(
 
     unique_ptr<DownloadJob> job(new MyDownloadJob(make_job_id()));
     const char contents[] = "Hello world";
-    write(job->write_socket(), contents, sizeof(contents));
+    if (write(job->write_socket(), contents, sizeof(contents)) != sizeof(contents))
+    {
+        ResourceException e("download(): write failed", errno);
+        job->report_error(make_exception_ptr(e));
+        return make_exceptional_future<unique_ptr<DownloadJob>>(e);
+    }
     job->report_complete();
     return make_ready_future(std::move(job));
 }
@@ -261,7 +252,7 @@ boost::future<Item> MyProvider::move(
 {
     printf("move('%s', '%s', '%s') called by %s (%d)\n", item_id.c_str(), new_parent_id.c_str(), new_name.c_str(), ctx.security_label.c_str(), ctx.pid);
     fflush(stdout);
-    Item metadata{item_id, new_parent_id, new_name, "etag", ItemType::file, {}};
+    Item metadata{item_id, { new_parent_id }, new_name, "etag", ItemType::file, {}};
     return make_ready_future(metadata);
 }
 
@@ -271,7 +262,7 @@ boost::future<Item> MyProvider::copy(
 {
     printf("copy('%s', '%s', '%s') called by %s (%d)\n", item_id.c_str(), new_parent_id.c_str(), new_name.c_str(), ctx.security_label.c_str(), ctx.pid);
     fflush(stdout);
-    Item metadata{"new_item_id", new_parent_id, new_name, "etag", ItemType::file, {}};
+    Item metadata{"new_item_id", { new_parent_id }, new_name, "etag", ItemType::file, {}};
     return make_ready_future(metadata);
 }
 
@@ -294,7 +285,11 @@ boost::future<Item> MyUploadJob::finish()
     unlink(new_filename.c_str());
     link(old_filename.c_str(), new_filename.c_str());
 
-    Item metadata{"some_id", "", "some_upload", "etag", ItemType::file, {}};
+    Item metadata
+    {
+        "some_id", { "root_id" }, "some_upload", "etag", ItemType::file,
+        { { SIZE_IN_BYTES, 10 }, { LAST_MODIFIED_TIME, "2011-04-05T14:30:10.005Z" } }
+    };
     return make_ready_future(metadata);
 }
 

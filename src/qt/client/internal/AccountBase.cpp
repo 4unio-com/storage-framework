@@ -19,6 +19,8 @@
 #include <unity/storage/qt/client/internal/AccountBase.h>
 
 #include <unity/storage/qt/client/Exceptions.h>
+#include <unity/storage/qt/client/internal/RuntimeBase.h>
+#include <unity/storage/qt/client/Runtime.h>
 
 #include <cassert>
 
@@ -42,13 +44,18 @@ AccountBase::AccountBase(weak_ptr<Runtime> const& runtime)
     assert(runtime.lock());
 }
 
-Runtime* AccountBase::runtime() const
+shared_ptr<Runtime> AccountBase::runtime() const
 {
     if (auto runtime = runtime_.lock())
     {
-        return runtime.get();
+        auto runtime_base = runtime->p_;
+        if (runtime_base->destroyed_)
+        {
+            throw RuntimeDestroyedException("Account::runtime()");
+        }
+        return runtime;
     }
-    throw RuntimeDestroyedException("AccountBase::runtime()");
+    throw RuntimeDestroyedException("Account::runtime()");
 }
 
 void AccountBase::set_public_instance(weak_ptr<Account> const& p)

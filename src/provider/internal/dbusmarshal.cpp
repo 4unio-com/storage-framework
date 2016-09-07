@@ -31,29 +31,57 @@ namespace storage
 namespace provider
 {
 
+namespace
+{
+
+QDBusVariant to_qdbus_variant(MetadataValue const& v)
+{
+    switch (v.which())
+    {
+        case 0:
+            return QDBusVariant(QString::fromStdString(boost::get<string>(v)));
+        case 1:
+            return QDBusVariant(qlonglong(boost::get<int64_t>(v)));
+        default:
+            abort();  // Impossible.  // LCOV_EXCL_LINE
+    }
+}
+
+}  // namespace
+
 QDBusArgument& operator<<(QDBusArgument& argument, Item const& item)
 {
     argument.beginStructure();
     argument << QString::fromStdString(item.item_id);
-    argument << QString::fromStdString(item.parent_id);
+    {
+        argument.beginArray(qMetaTypeId<QString>());
+        for (auto const& id : item.parent_ids)
+        {
+            argument << QString::fromStdString(id);
+        }
+        argument.endArray();
+    }
     argument << QString::fromStdString(item.name);
     argument << QString::fromStdString(item.etag);
     argument << static_cast<int32_t>(item.type);
-    argument.beginMap(QVariant::String, qMetaTypeId<QDBusVariant>());
-    for (auto const& pair : item.metadata)
     {
-        argument.beginMapEntry();
-        argument << QString::fromStdString(pair.first) << QDBusVariant(QString::fromStdString(pair.second));
-        argument.endMapEntry();
+        argument.beginMap(QVariant::String, qMetaTypeId<QDBusVariant>());
+        for (auto const& pair : item.metadata)
+        {
+            argument.beginMapEntry();
+            argument << QString::fromStdString(pair.first) << to_qdbus_variant(pair.second);
+            argument.endMapEntry();
+        }
+        argument.endMap();
     }
-    argument.endMap();
     argument.endStructure();
     return argument;
 }
 
 QDBusArgument const& operator>>(QDBusArgument const&, Item&)
 {
-    throw std::runtime_error("Item decode not implemented");
+    // We don't expect to ever have to unmarshal anything, only marshal it.
+    qFatal("unexpected call to operator>>(QDBusArgument const&, Item&)");  // LCOV_EXCL_LINE
 }
 
 QDBusArgument& operator<<(QDBusArgument& argument, ItemList const& items)
@@ -69,7 +97,8 @@ QDBusArgument& operator<<(QDBusArgument& argument, ItemList const& items)
 
 QDBusArgument const& operator>>(QDBusArgument const&, ItemList&)
 {
-    throw std::runtime_error("std::vector<Item> decode not implemented");
+    // We don't expect to ever have to unmarshal anything, only marshal it.
+    qFatal("unexpected call to operator>>(QDBusArgument const&, ItemList&)");  // LCOV_EXCL_LINE
 }
 
 }

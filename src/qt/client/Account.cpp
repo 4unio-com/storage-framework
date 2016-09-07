@@ -41,7 +41,7 @@ Account::Account(internal::AccountBase* p)
 
 Account::~Account() = default;
 
-Runtime* Account::runtime() const
+shared_ptr<Runtime> Account::runtime() const
 {
     return p_->runtime();
 }

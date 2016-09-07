@@ -6,6 +6,7 @@ set(root_inc_dir ${CMAKE_SOURCE_DIR}/include)
 
 set(subdirs
     unity/storage
+    unity/storage/provider
     unity/storage/qt/client
     unity/storage/qt/client/internal/local_client
     unity/storage/qt/client/internal/remote_client
@@ -16,6 +17,8 @@ set(extra_inc_dirs "${extra_inc_dirs};${Qt5DBus_INCLUDE_DIRS}")
 set(extra_inc_dirs "${extra_inc_dirs};${Qt5Network_INCLUDE_DIRS}")
 set(extra_inc_dirs "${extra_inc_dirs};${GIO_DEPS_INCLUDE_DIRS}")
 set(extra_inc_dirs "${extra_inc_dirs};${ONLINEACCOUNTS_DEPS_INCLUDE_DIRS}")
+
+set(extra_defines "-D BOOST_THREAD_VERSION=4")
 
 # Replace ; with -I as the include directories are separated by ";"
 string(REPLACE ";" " -I/" extra_inc_dirs "${extra_inc_dirs}")
@@ -36,12 +39,14 @@ foreach(dir ${subdirs})
     # Test that each public header compiles stand-alone.
     add_test(stand-alone-${location}-headers
         ${CMAKE_CURRENT_SOURCE_DIR}/compile_headers.py
+            ${extra_defines}
             ${public_inc_dir} ${CMAKE_CXX_COMPILER} "${CMAKE_CXX_COMPILER_ARG1} -fPIC -fsyntax-only -I${root_inc_dir} -I${public_inc_dir} ${other_inc_dirs} ${CMAKE_CXX_FLAGS} ${extra_inc_dirs}")
 
     # Test that each internal header compiles stand-alone.
     if (IS_DIRECTORY ${internal_inc_dir})
         add_test(stand-alone-${location}-internal-headers
             ${CMAKE_CURRENT_SOURCE_DIR}/compile_headers.py
+                ${extra_defines}
                 ${internal_inc_dir} ${CMAKE_CXX_COMPILER} "${CMAKE_CXX_COMPILER_ARG1} -fPIC -fsyntax-only -I${root_inc_dir} -I${internal_inc_dir} ${other_inc_dirs} ${CMAKE_CXX_FLAGS} ${extra_inc_dirs}")
     endif()
 

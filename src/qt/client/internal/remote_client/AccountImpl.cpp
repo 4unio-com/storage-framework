@@ -41,10 +41,9 @@ namespace internal
 namespace remote_client
 {
 
-static constexpr char BUS_NAME[] = "com.canonical.StorageFramework.Provider.ProviderTest";
-
 AccountImpl::AccountImpl(weak_ptr<Runtime> const& runtime,
-                         int account_id,
+                         QString const& bus_name,
+                         QString const& object_path,
                          QString const& owner,
                          QString const& owner_id,
                          QString const& description)
@@ -55,35 +54,53 @@ AccountImpl::AccountImpl(weak_ptr<Runtime> const& runtime,
 {
     auto rt_impl = dynamic_pointer_cast<RuntimeImpl>(runtime.lock()->p_);
     assert(rt_impl);
-    QString bus_path = "/provider/" + QString::number(account_id);
-    provider_.reset(new ProviderInterface(BUS_NAME, bus_path, rt_impl->connection()));
-    if (!provider_->isValid())
-    {
-        throw LocalCommsException("AccountImpl(): " + provider_->lastError().message());
-    }
+    provider_.reset(new ProviderInterface(bus_name, object_path, rt_impl->connection()));
 }
 
 QString AccountImpl::owner() const
 {
+    runtime();  // Throws if runtime was destroyed.
     return owner_;
 }
 
 QString AccountImpl::owner_id() const
 {
+    runtime();  // Throws if runtime was destroyed.
     return owner_id_;
 }
 
 QString AccountImpl::description() const
 {
+    runtime();  // Throws if runtime was destroyed.
     return description_;
 }
 
 QFuture<QVector<Root::SPtr>> AccountImpl::roots()
 {
+    try
+    {
+        runtime();  // Throws if runtime was destroyed.
+    }
+    catch (RuntimeDestroyedException const&)
+    {
+        return make_exceptional_future<QVector<Root::SPtr>>(RuntimeDestroyedException("Account::roots()"));
+    }
+
     auto reply = provider_->Roots();
 
     auto process_reply = [this](decltype(reply) const& reply, QFutureInterface<QVector<Root::SPtr>>& qf)
     {
+        try
+        {
+            this->runtime();
+        }
+        catch (RuntimeDestroyedException const& e)
+        {
+            qf.reportException(RuntimeDestroyedException("Account::roots()"));
+            qf.reportFinished();
+            return;
+        }
+
         QVector<shared_ptr<Root>> roots;
         auto metadata = reply.value();
         for (auto const& md : metadata)
@@ -97,7 +114,8 @@ QFuture<QVector<Root::SPtr>> AccountImpl::roots()
             roots.append(root);
         }
         roots_ = roots;
-        make_ready_future(qf, roots);
+        qf.reportResult(roots);
+        qf.reportFinished();
     };
 
     auto handler = new Handler<QVector<Root::SPtr>>(this, reply, process_reply);

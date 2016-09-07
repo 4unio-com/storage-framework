@@ -10,6 +10,7 @@ set(QT_CLIENT_LIB_REMOTE_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/Runtime_create.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/RuntimeImpl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/UploaderImpl.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/validate.cpp
         ${CMAKE_SOURCE_DIR}/include/unity/storage/qt/client/internal/remote_client/HandlerBase.h
         ${CMAKE_SOURCE_DIR}/include/unity/storage/qt/client/internal/remote_client/RuntimeImpl.h
     PARENT_SCOPE)

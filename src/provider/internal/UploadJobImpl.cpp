@@ -17,7 +17,10 @@
  */
 
 #include <unity/storage/provider/internal/UploadJobImpl.h>
+#include <unity/storage/internal/safe_strerror.h>
+#include <unity/storage/provider/Exceptions.h>
 #include <unity/storage/provider/UploadJob.h>
+#include <unity/storage/provider/internal/MainLoopExecutor.h>
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -26,6 +29,7 @@
 #include <stdexcept>
 
 using namespace std;
+using namespace unity::storage::internal;
 
 namespace unity
 {
@@ -42,18 +46,30 @@ UploadJobImpl::UploadJobImpl(std::string const& upload_id)
     int socks[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, socks) < 0)
     {
-        throw runtime_error("could not create socketpair");
+        int error_code = errno;
+        string msg = "could not create socketpair: " + safe_strerror(error_code);
+        throw ResourceException(msg, error_code);
     }
     read_socket_ = socks[0];
     write_socket_ = socks[1];
+
+#if 0
+    // TODO: We should be able to half-close the write channel of the read socket, and the read channel of
+    // the write socket. But, if we do, QLocalSocket indicates that everything was closed, which causes
+    // failures on the client side. We suspect a QLocalSocket bug -- need to investigate.
     if (shutdown(read_socket_, SHUT_WR) < 0)
     {
-        throw runtime_error("Could not shut down write channel on read socket");
+        int error_code = errno;
+        string msg = "could not shut down write channel on read socket: " + safe_strerror(error_code);
+        throw ResourceException(msg, error_code);
     }
     if (shutdown(write_socket_, SHUT_RD) < 0)
     {
-        throw runtime_error("Could not shut down read channel on write socket");
+        int error_code = errno;
+        string msg = "Could not shut down read channel on write socket" + safe_strerror(error_code);
+        throw ResourceException(msg, error_code);
     }
+#endif
 }
 
 UploadJobImpl::~UploadJobImpl()
@@ -72,7 +88,7 @@ void UploadJobImpl::complete_init()
 {
 }
 
-std::string const& UploadJobImpl::upload_id() const
+string const& UploadJobImpl::upload_id() const
 {
     return upload_id_;
 }
@@ -90,28 +106,29 @@ int UploadJobImpl::take_write_socket()
     return sock;
 }
 
-string const& UploadJobImpl::sender_bus_name() const
-{
-    return sender_bus_name_;
-}
-
-void UploadJobImpl::set_sender_bus_name(string const& bus_name)
-{
-    assert(bus_name[0] == ':');
-    sender_bus_name_ = bus_name;
-}
-
-void UploadJobImpl::report_error(std::exception_ptr p)
+void UploadJobImpl::report_error(exception_ptr p)
 {
     if (read_socket_ >= 0)
     {
-        close(write_socket_);
+        close(read_socket_);
         read_socket_ = -1;
     }
 
     lock_guard<mutex> guard(completion_lock_);
     completed_ = true;
-    completion_promise_.set_exception(p);
+    // Convert std::exception_ptr to boost::exception_ptr
+    try
+    {
+        rethrow_exception(p);
+    }
+    catch (StorageException const& e)
+    {
+        completion_promise_.set_exception(e);
+    }
+    catch (...)
+    {
+        completion_promise_.set_exception(boost::current_exception());
+    }
 }
 
 boost::future<Item> UploadJobImpl::finish(UploadJob& job)

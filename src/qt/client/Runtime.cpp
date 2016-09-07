@@ -64,6 +64,12 @@ QFuture<QVector<shared_ptr<Account>>> Runtime::accounts()
     return p_->accounts();
 }
 
+shared_ptr<Account> Runtime::make_test_account(QString const& bus_name,
+                                               QString const& object_path)
+{
+    return p_->make_test_account(bus_name, object_path);
+}
+
 }  // namespace client
 }  // namespace qt
 }  // namespace storage

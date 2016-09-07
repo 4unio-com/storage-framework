@@ -52,7 +52,7 @@ public:
     AccountBase(AccountBase const&) = delete;
     AccountBase& operator=(AccountBase const&) = delete;
 
-    Runtime* runtime() const;
+    std::shared_ptr<Runtime> runtime() const;
     virtual QString owner() const = 0;
     virtual QString owner_id() const = 0;
     virtual QString description() const = 0;

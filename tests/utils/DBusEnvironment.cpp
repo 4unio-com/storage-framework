@@ -57,6 +57,11 @@ QDBusConnection const& DBusEnvironment::connection() const
     return runner_->sessionConnection();
 }
 
+QString const& DBusEnvironment::busAddress() const
+{
+    return runner_->sessionBus();
+}
+
 void DBusEnvironment::add_demo_provider(char const* service_id)
 {
     demo_provider_.reset(

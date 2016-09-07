@@ -51,7 +51,7 @@ QString Item::name() const
     return p_->name();
 }
 
-Root* Item::root() const
+shared_ptr<Root> Item::root() const
 {
     return p_->root();
 }

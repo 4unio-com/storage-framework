@@ -21,7 +21,11 @@
 #include <unity/storage/provider/ProviderBase.h>
 
 #include <boost/thread/future.hpp>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wswitch-default"
 #include <QObject>
+#pragma GCC diagnostic pop
 
 #include <exception>
 #include <mutex>
@@ -49,9 +53,6 @@ public:
     int read_socket() const;
     int take_write_socket();
 
-    std::string const& sender_bus_name() const;
-    void set_sender_bus_name(std::string const& bus_name);
-
     void report_error(std::exception_ptr p);
     boost::future<Item> finish(UploadJob& job);
     boost::future<void> cancel(UploadJob& job);
@@ -63,7 +64,6 @@ protected:
     std::string const upload_id_;
     int read_socket_ = -1;
     int write_socket_ = -1;
-    std::string sender_bus_name_;
 
     std::mutex completion_lock_;
     bool completed_ = false;

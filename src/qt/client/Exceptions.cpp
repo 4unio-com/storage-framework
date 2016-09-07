@@ -42,6 +42,11 @@ char const* StorageException::what() const noexcept
     return what_string_.c_str();
 }
 
+QString StorageException::error_message() const
+{
+    return error_message_;
+}
+
 LocalCommsException::LocalCommsException(QString const& error_message)
     : StorageException("LocalCommsException", error_message)
 {
@@ -76,10 +81,9 @@ void RemoteCommsException::raise() const
     throw *this;
 }
 
-DeletedException::DeletedException(QString const& error_message, QString const& identity, QString const& name)
+DeletedException::DeletedException(QString const& error_message, QString const& identity)
     : StorageException("DeletedException", error_message)
     , identity_(identity)
-    , name_(name)
 {
 }
 
@@ -100,13 +104,8 @@ QString DeletedException::native_identity() const
     return identity_;
 }
 
-QString DeletedException::name() const
-{
-    return name_;
-}
-
 RuntimeDestroyedException::RuntimeDestroyedException(QString const& method)
-    : StorageException("RuntimeDestroyedException", method + ": Runtime was destroyed previously")
+    : StorageException("RuntimeDestroyedException", method + ": runtime was destroyed previously")
 {
 }
 
@@ -276,8 +275,9 @@ void InvalidArgumentException::raise() const
     throw *this;
 }
 
-ResourceException::ResourceException(QString const& error_message)
+ResourceException::ResourceException(QString const& error_message, int error_code)
     : StorageException("ResourceException", error_message)
+    , error_code_(error_code)
 {
 }
 
@@ -291,6 +291,11 @@ ResourceException* ResourceException::clone() const
 void ResourceException::raise() const
 {
     throw *this;
+}
+
+int ResourceException::error_code() const noexcept
+{
+    return error_code_;
 }
 
 }  // namespace client

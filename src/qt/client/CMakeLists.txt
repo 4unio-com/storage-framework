@@ -80,7 +80,7 @@ install(
 # Build the remote client library
 set_source_files_properties(${CMAKE_SOURCE_DIR}/data/provider.xml PROPERTIES
     CLASSNAME ProviderInterface
-    INCLUDE unity/storage/qt/client/internal/remote_client/dbusmarshal.h
+    INCLUDE unity/storage/internal/dbusmarshal.h
 )
 
 qt5_add_dbus_interface(generated_files
@@ -109,6 +109,7 @@ set_target_properties(storage-framework-qt-client PROPERTIES
     VERSION ${SF_CLIENT_LIBVERSION}
 )
 target_link_libraries(storage-framework-qt-client
+    storage-framework-common-internal
     Qt5::Concurrent
     Qt5::Core
     Qt5::DBus

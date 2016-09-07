@@ -35,6 +35,7 @@ public:
     ~DBusEnvironment();
 
     QDBusConnection const& connection() const;
+    QString const& busAddress() const;
 
     void add_demo_provider(char const* service_id);
     void start_services();

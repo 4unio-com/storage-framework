@@ -163,6 +163,8 @@ if __name__ == "__main__":
                 Password("user", "pass")),
         Account(42, "Fake google account", "google-drive-scope",
                 OAuth2("fake-google-access-token", 0, [])),
+        Account(99, "Fake mcloud account", "com.canonical.scopes.mcloud_mcloud_mcloud",
+                OAuth2("fake-mcloud-access-token", 0, [])),
     ]
     server = Server(accounts)
     server.run()

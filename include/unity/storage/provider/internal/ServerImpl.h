@@ -19,6 +19,7 @@
 #pragma once
 
 #include <unity/storage/provider/Server.h>
+#include <unity/storage/internal/TraceMessageHandler.h>
 #include <unity/storage/provider/internal/DBusPeerCache.h>
 #include <unity/storage/provider/internal/ProviderInterface.h>
 
@@ -58,6 +59,7 @@ private:
     ServerBase* const server_;
     std::string const bus_name_;
     std::string const service_id_;
+    unity::storage::internal::TraceMessageHandler trace_message_handler_;
 
     std::unique_ptr<QCoreApplication> app_;
     std::unique_ptr<OnlineAccounts::Manager> manager_;

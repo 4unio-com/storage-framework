@@ -20,9 +20,12 @@
 
 #include <unity/storage/qt/client/Exceptions.h>
 #include <unity/storage/qt/client/internal/make_future.h>
+#include <unity/storage/qt/client/internal/remote_client/dbusmarshal.h>
 #include <unity/storage/qt/client/internal/remote_client/HandlerBase.h>
 
 #include <QDBusPendingReply>
+
+#include <cassert>
 
 namespace unity
 {
@@ -72,8 +75,41 @@ Handler<T>::Handler(QObject* parent,
                       {
                           if (call.isError())
                           {
-                              qDebug() << call.error().message();  // TODO, remove this
-                              make_exceptional_future<T>(ResourceException("DBus error return"));
+                              try
+                              {
+                                  auto ep = unmarshal_exception(call);
+                                  std::rethrow_exception(ep);
+                              }
+                              // We catch some exceptions that are "surprising" so we can log those.
+                              catch (LocalCommsException const& e)
+                              {
+                                  qCritical() << "provider exception:" << e.what();
+                                  qf_.reportException(e);
+                                  qf_.reportFinished();
+                              }
+                              catch (RemoteCommsException const& e)
+                              {
+                                  qCritical() << "provider exception:" << e.what();
+                                  qf_.reportException(e);
+                                  qf_.reportFinished();
+                              }
+                              catch (ResourceException const& e)
+                              {
+                                  qCritical() << "provider exception:" << e.what();
+                                  qf_.reportException(e);
+                                  qf_.reportFinished();
+                              }
+                              catch (StorageException const& e)
+                              {
+                                  qf_.reportException(e);
+                                  qf_.reportFinished();
+                              }
+                              // LCOV_EXCL_START
+                              catch (...)
+                              {
+                                  abort();  // Impossible.
+                              }
+                              // LCOV_EXCL_STOP
                               return;
                           }
                           // TODO: See HACK above. Should just be closure(call, qf_);

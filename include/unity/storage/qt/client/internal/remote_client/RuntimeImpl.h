@@ -50,6 +50,8 @@ public:
 
     virtual void shutdown() override;
     virtual QFuture<QVector<std::shared_ptr<Account>>> accounts() override;
+    virtual std::shared_ptr<Account> make_test_account(QString const& bus_name,
+                                                       QString const& object_path) override;
 
     QDBusConnection& connection();
 
@@ -58,6 +60,12 @@ private Q_SLOTS:
     virtual void timeout();
 
 private:
+    std::shared_ptr<Account> make_account(QString const& bus_name,
+                                          QString const& object_path,
+                                          QString const& owner,
+                                          QString const& owner_id,
+                                          QString const& description);
+
     QDBusConnection conn_;
     std::unique_ptr<OnlineAccounts::Manager> manager_;  // TODO: Hack until we can use the registry
     QTimer timer_;

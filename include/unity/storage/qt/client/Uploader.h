@@ -92,6 +92,14 @@ public:
     std::shared_ptr<QLocalSocket> socket() const;
 
     /**
+    \brief Returns the size that was passed to Folder::create_file() or File::create_uploader().
+
+    \return The number of bytes that the uploader expects to be written to the `QLocalSocket` returned
+    from socket().
+    */
+    int64_t size() const;
+
+    /**
     \brief Finalizes the upload.
 
     Once you have written the file contents to the socket returned by socket(), you must call finish_upload(),

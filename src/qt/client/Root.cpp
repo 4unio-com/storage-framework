@@ -30,6 +30,7 @@ namespace client
 {
 
 using namespace internal;
+using namespace std;
 
 Root::Root(RootBase* p)
     : Folder(p)
@@ -38,7 +39,7 @@ Root::Root(RootBase* p)
 
 Root::~Root() = default;
 
-Account* Root::account() const
+shared_ptr<Account> Root::account() const
 {
     return dynamic_cast<RootBase*>(p_.get())->account();
 }

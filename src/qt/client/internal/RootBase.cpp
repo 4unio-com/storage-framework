@@ -18,6 +18,7 @@
 
 #include <unity/storage/qt/client/internal/RootBase.h>
 
+#include <unity/storage/qt/client/Account.h>
 #include <unity/storage/qt/client/Exceptions.h>
 
 #include <cassert>
@@ -43,11 +44,19 @@ RootBase::RootBase(QString const& identity, weak_ptr<Account> const& account)
     assert(account.lock());
 }
 
-Account* RootBase::account() const
+shared_ptr<Account> RootBase::account() const
 {
     if (auto acc = account_.lock())
     {
-        return acc.get();
+        try
+        {
+            acc->runtime();
+        }
+        catch (RuntimeDestroyedException const&)
+        {
+            throw RuntimeDestroyedException("Root::account()");
+        }
+        return acc;
     }
     throw RuntimeDestroyedException("Root::account()");
 }

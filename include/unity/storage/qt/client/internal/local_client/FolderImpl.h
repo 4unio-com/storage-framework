@@ -40,6 +40,7 @@ public:
     FolderImpl(QString const& identity);
     FolderImpl(QString const& identity, ItemType type);
 
+    virtual QString name() const override;
     QFuture<QVector<std::shared_ptr<Item>>> list() const override;
     QFuture<QVector<std::shared_ptr<Item>>> lookup(QString const& name) const override;
     QFuture<std::shared_ptr<Folder>> create_folder(QString const& name) override;

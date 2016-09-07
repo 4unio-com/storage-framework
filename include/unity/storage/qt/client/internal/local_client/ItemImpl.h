@@ -47,7 +47,6 @@ public:
     ItemImpl(QString const& identity, ItemType type);
     virtual ~ItemImpl();
 
-    virtual QString name() const override;
     virtual QString etag() const override;
     virtual QVariantMap metadata() const override;
     virtual QDateTime last_modified_time() const override;
@@ -65,20 +64,18 @@ public:
     void set_timestamps() noexcept;
     bool has_conflict() const noexcept;
 
-    std::unique_lock<std::mutex> get_lock();
-
 protected:
     static boost::filesystem::path sanitize(QString const& name, QString const& method);
     static bool is_reserved_path(boost::filesystem::path const& path) noexcept;
 
-    DeletedException deleted_ex(QString const& method) const noexcept;
-
-    bool deleted_;
     QString name_;
     QString etag_;
     QDateTime modified_time_;
     QVariantMap metadata_;
-    std::mutex mutable mutex_;
+    std::recursive_mutex mutable mutex_;
+
+private:
+    static void copy_recursively(boost::filesystem::path const& source, boost::filesystem::path const& target);
 };
 
 }  // namespace local_client

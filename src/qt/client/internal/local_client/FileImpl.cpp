@@ -22,6 +22,7 @@
 #include <unity/storage/qt/client/Exceptions.h>
 #include <unity/storage/qt/client/File.h>
 #include <unity/storage/qt/client/internal/local_client/DownloaderImpl.h>
+#include <unity/storage/qt/client/internal/local_client/storage_exception.h>
 #include <unity/storage/qt/client/internal/local_client/UploaderImpl.h>
 #include <unity/storage/qt/client/internal/make_future.h>
 #include <unity/storage/qt/client/Uploader.h>
@@ -50,47 +51,44 @@ FileImpl::FileImpl(QString const& identity)
 
 QString FileImpl::name() const
 {
-    lock_guard<mutex> guard(mutex_);
+    lock_guard<decltype(mutex_)> guard(mutex_);
 
-    if (deleted_)
-    {
-        throw deleted_ex("File::name()");
-    }
+    throw_if_destroyed("File::name()");
     return name_;
 }
 
 int64_t FileImpl::size() const
 {
-    lock_guard<mutex> guard(mutex_);
+    lock_guard<decltype(mutex_)> guard(mutex_);
 
-    if (deleted_)
-    {
-        throw deleted_ex("File::size()");
-    }
-
+    throw_if_destroyed("File::size()");
     try
     {
         boost::filesystem::path p = identity_.toStdString();
         return file_size(p);
     }
-    catch (std::exception const& e)
+    catch (std::exception const&)
     {
-        throw ResourceException(e.what());
+        throw_storage_exception(QString("File::size()"), current_exception());
     }
 }
 
 QFuture<Uploader::SPtr> FileImpl::create_uploader(ConflictPolicy policy, int64_t size)
 {
-    lock_guard<mutex> guard(mutex_);
+    lock_guard<decltype(mutex_)> guard(mutex_);
 
-    if (deleted_)
+    try
     {
-        return make_exceptional_future<Uploader::SPtr>(deleted_ex("File::create_uploader()"));
+        throw_if_destroyed("File::create_uploader()");
+    }
+    catch (StorageException const& e)
+    {
+        return internal::make_exceptional_future<Uploader::SPtr>(e);
     }
     if (size < 0)
     {
         QString msg = "File::create_uploader(): size must be >= 0";
-        return make_exceptional_future<shared_ptr<Uploader>>(InvalidArgumentException(msg));
+        return internal::make_exceptional_future<shared_ptr<Uploader>>(InvalidArgumentException(msg));
     }
 
     auto file = dynamic_pointer_cast<File>(public_instance_.lock());
@@ -102,11 +100,15 @@ QFuture<Uploader::SPtr> FileImpl::create_uploader(ConflictPolicy policy, int64_t
 
 QFuture<Downloader::SPtr> FileImpl::create_downloader()
 {
-    lock_guard<mutex> guard(mutex_);
+    lock_guard<decltype(mutex_)> guard(mutex_);
 
-    if (deleted_)
+    try
     {
-        return make_exceptional_future<Downloader::SPtr>(deleted_ex("File::create_downloader()"));
+        throw_if_destroyed("File::create_downloader()");
+    }
+    catch (StorageException const& e)
+    {
+        return internal::make_exceptional_future<Downloader::SPtr>(e);
     }
 
     auto pi = public_instance_.lock();

@@ -20,6 +20,7 @@
 
 #include "ProviderInterface.h"
 #include <unity/storage/qt/client/Downloader.h>
+#include <unity/storage/qt/client/File.h>
 #include <unity/storage/qt/client/internal/remote_client/Handler.h>
 
 #include <cassert>
@@ -51,7 +52,7 @@ DownloaderImpl::DownloaderImpl(QString const& download_id,
     , fd_(fd)
     , file_(file)
     , provider_(provider)
-    , read_socket_(new QLocalSocket)
+    , read_socket_(new QLocalSocket, [](QLocalSocket* s){ s->deleteLater(); })
 {
     assert(!download_id.isEmpty());
     assert(fd.isValid());
@@ -61,7 +62,7 @@ DownloaderImpl::DownloaderImpl(QString const& download_id,
 
 DownloaderImpl::~DownloaderImpl()
 {
-    cancel();
+    read_socket_->abort();
 }
 
 shared_ptr<File> DownloaderImpl::file() const
@@ -78,9 +79,9 @@ QFuture<void> DownloaderImpl::finish_download()
 {
     auto reply = provider_->FinishDownload(download_id_);
 
-    auto process_reply = [this](decltype(reply) const&, QFutureInterface<void>&)
+    auto process_reply = [this](decltype(reply) const&, QFutureInterface<void>& qf)
     {
-        make_ready_future();
+        qf.reportFinished();
     };
 
     auto handler = new Handler<void>(this, reply, process_reply);
@@ -90,7 +91,8 @@ QFuture<void> DownloaderImpl::finish_download()
 QFuture<void> DownloaderImpl::cancel() noexcept
 {
     read_socket_->abort();
-    return make_ready_future();
+    QString msg = "Downloader::finish_download(): download of " + file_->name() + " was cancelled";
+    return make_exceptional_future(CancelledException(msg));
 }
 
 Downloader::SPtr DownloaderImpl::make_downloader(QString const& download_id,

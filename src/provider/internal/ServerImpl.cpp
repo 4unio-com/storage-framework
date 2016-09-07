@@ -17,6 +17,7 @@
  */
 
 #include <unity/storage/provider/internal/ServerImpl.h>
+#include <unity/storage/provider/Exceptions.h>
 #include <unity/storage/provider/ProviderBase.h>
 #include <unity/storage/provider/internal/AccountData.h>
 #include <unity/storage/provider/internal/MainLoopExecutor.h>
@@ -37,7 +38,10 @@ namespace internal
 {
 
 ServerImpl::ServerImpl(ServerBase* server, string const& bus_name, string const& account_service_id)
-    : server_(server), bus_name_(bus_name), service_id_(account_service_id)
+    : server_(server)
+    , bus_name_(bus_name)
+    , service_id_(account_service_id)
+    , trace_message_handler_("storage_provider")
 {
     qDBusRegisterMetaType<Item>();
     qDBusRegisterMetaType<std::vector<Item>>();
@@ -85,7 +89,8 @@ void ServerImpl::account_manager_ready()
 
     if (!bus.registerService(QString::fromStdString(bus_name_)))
     {
-        throw runtime_error("Could not acquire bus name: " + bus_name_);
+        string msg = string("Could not acquire bus name: ") + bus_name_ + ": " + bus.lastError().message().toStdString();
+        throw ResourceException(msg, int(bus.lastError().type()));
     }
     // TODO: claim bus name
     qDebug() << "Bus unique name:" << bus.baseService();

@@ -46,7 +46,7 @@ class RootBase : public virtual FolderBase
 public:
     RootBase(QString const& identity, std::weak_ptr<Account> const& account);
 
-    Account* account() const;
+    std::shared_ptr<Account> account() const;
     virtual QFuture<int64_t> free_space_bytes() const = 0;
     virtual QFuture<int64_t> used_space_bytes() const = 0;
     virtual QFuture<Item::SPtr> get(QString native_identity) const = 0;

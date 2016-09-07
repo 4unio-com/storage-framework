@@ -103,7 +103,7 @@ public:
 
     If this item is a root, the returned pointer points at this item.
     */
-    Root* root() const;
+    std::shared_ptr<Root> root() const;
 
     /**
     \brief Returns the type of the item.

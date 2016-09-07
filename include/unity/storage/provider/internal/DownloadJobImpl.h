@@ -48,9 +48,6 @@ public:
     int write_socket() const;
     int take_read_socket();
 
-    std::string const& sender_bus_name() const;
-    void set_sender_bus_name(std::string const& bus_name);
-
     void report_complete();
     void report_error(std::exception_ptr p);
     boost::future<void> finish(DownloadJob& job);
@@ -63,7 +60,6 @@ protected:
     std::string const download_id_;
     int read_socket_ = -1;
     int write_socket_ = -1;
-    std::string sender_bus_name_;
 
     std::mutex completion_lock_;
     bool completed_ = false;

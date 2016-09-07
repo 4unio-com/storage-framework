@@ -66,9 +66,6 @@ public:
     static std::shared_ptr<Item> make_item(storage::internal::ItemMetadata const& md, std::weak_ptr<Root> root);
 
 protected:
-    DeletedException deleted_ex(QString const& method) const noexcept;
-
-    bool deleted_ = false;
     storage::internal::ItemMetadata md_;
 
     friend class DeleteHandler;

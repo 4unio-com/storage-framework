@@ -18,6 +18,7 @@
 
 #include <unity/storage/provider/internal/PendingJobs.h>
 #include <unity/storage/provider/DownloadJob.h>
+#include <unity/storage/provider/Exceptions.h>
 #include <unity/storage/provider/UploadJob.h>
 #include <unity/storage/provider/internal/DownloadJobImpl.h>
 #include <unity/storage/provider/internal/MainLoopExecutor.h>
@@ -47,67 +48,79 @@ PendingJobs::PendingJobs(QDBusConnection const& bus, QObject *parent)
             this, &PendingJobs::service_disconnected);
 }
 
-PendingJobs::~PendingJobs() = default;
+PendingJobs::~PendingJobs()
+{
+    for (const auto& pair : downloads_)
+    {
+        cancel_job(pair.second, "download " + pair.second->download_id());
+    }
+    for (const auto& pair : uploads_)
+    {
+        cancel_job(pair.second, "upload " + pair.second->upload_id());
+    }
+}
 
-void PendingJobs::add_download(unique_ptr<DownloadJob> &&job)
+void PendingJobs::add_download(QString const& client_bus_name,
+                               unique_ptr<DownloadJob> &&job)
 {
     lock_guard<mutex> guard(lock_);
 
-    assert(!job->p_->sender_bus_name().empty());
-    assert(downloads_.find(job->download_id()) == downloads_.end());
+    assert(!client_bus_name.isEmpty() && client_bus_name[0] == ':');
+    const auto job_id = make_pair(client_bus_name, job->download_id());
+    assert(downloads_.find(job_id) == downloads_.end());
 
     shared_ptr<DownloadJob> j(std::move(job));
-    downloads_.emplace(j->download_id(), j);
-    watch_peer(j->p_->sender_bus_name());
+    downloads_.emplace(job_id, j);
+    watch_peer(client_bus_name);
 }
 
-std::shared_ptr<DownloadJob> PendingJobs::get_download(std::string const& download_id)
+shared_ptr<DownloadJob> PendingJobs::remove_download(QString const& client_bus_name,
+                                                     string const& download_id)
 {
     lock_guard<mutex> guard(lock_);
 
-    return downloads_.at(download_id);
-}
-
-std::shared_ptr<DownloadJob> PendingJobs::remove_download(std::string const& download_id)
-{
-    lock_guard<mutex> guard(lock_);
-
-    auto job = downloads_.at(download_id);
-    downloads_.erase(download_id);
-    unwatch_peer(job->p_->sender_bus_name());
+    auto it = downloads_.find({client_bus_name, download_id});
+    if (it == downloads_.cend())
+    {
+        throw LogicException("No such download: " + download_id);
+    }
+    auto job = it->second;
+    downloads_.erase(it);
+    unwatch_peer(client_bus_name);
     return job;
 }
 
-void PendingJobs::add_upload(unique_ptr<UploadJob> &&job)
+void PendingJobs::add_upload(QString const& client_bus_name,
+                             unique_ptr<UploadJob> &&job)
 {
     lock_guard<mutex> guard(lock_);
 
-    assert(!job->p_->sender_bus_name().empty());
-    assert(uploads_.find(job->upload_id()) == uploads_.end());
+    assert(!client_bus_name.isEmpty() && client_bus_name[0] == ':');
+    const auto job_id = make_pair(client_bus_name, job->upload_id());
+    assert(uploads_.find(job_id) == uploads_.end());
 
     shared_ptr<UploadJob> j(std::move(job));
-    uploads_.emplace(j->upload_id(), j);
-    watch_peer(j->p_->sender_bus_name());
+    uploads_.emplace(job_id, j);
+    watch_peer(client_bus_name);
 }
 
-std::shared_ptr<UploadJob> PendingJobs::get_upload(std::string const& upload_id)
+shared_ptr<UploadJob> PendingJobs::remove_upload(QString const& client_bus_name,
+                                                 string const& upload_id)
 {
     lock_guard<mutex> guard(lock_);
 
-    return uploads_.at(upload_id);
-}
-
-std::shared_ptr<UploadJob> PendingJobs::remove_upload(std::string const& upload_id)
-{
-    lock_guard<mutex> guard(lock_);
-
-    auto job = uploads_.at(upload_id);
-    uploads_.erase(upload_id);
-    unwatch_peer(job->p_->sender_bus_name());
+    auto it = uploads_.find({client_bus_name, upload_id});
+    if (it == uploads_.cend())
+    {
+        throw LogicException("No such upload: " + upload_id);
+    }
+    auto job = it->second;
+    uploads_.erase(it);
+    unwatch_peer(client_bus_name);
     return job;
 }
 
-void PendingJobs::watch_peer(string const& bus_name)
+void PendingJobs::watch_peer(QString const& bus_name)
 {
     auto it = services_.find(bus_name);
     if (it != services_.end())
@@ -116,12 +129,12 @@ void PendingJobs::watch_peer(string const& bus_name)
     }
     else
     {
-        watcher_.addWatchedService(QString::fromStdString(bus_name));
+        watcher_.addWatchedService(bus_name);
         services_[bus_name] = 1;
     }
 }
 
-void PendingJobs::unwatch_peer(string const& bus_name)
+void PendingJobs::unwatch_peer(QString const& bus_name)
 {
     auto it = services_.find(bus_name);
     if (it == services_.end())
@@ -132,72 +145,62 @@ void PendingJobs::unwatch_peer(string const& bus_name)
     if (it->second == 0)
     {
         services_.erase(it);
-        watcher_.removeWatchedService(QString::fromStdString(bus_name));
+        watcher_.removeWatchedService(bus_name);
     }
 }
 
 void PendingJobs::service_disconnected(QString const& service_name)
 {
     lock_guard<mutex> guard(lock_);
-    string const bus_name = service_name.toStdString();
 
-    for (auto it = downloads_.cbegin(); it != downloads_.cend(); )
+    services_.erase(service_name);
+    watcher_.removeWatchedService(service_name);
+
+    const auto lower = make_pair(service_name, string());
+
+    for (auto it = downloads_.lower_bound(lower);
+         it != downloads_.cend() && it->first.first == service_name; )
     {
-        if (it->second->p_->sender_bus_name() == bus_name)
-        {
-            auto job = it->second;
-            it = downloads_.erase(it);
-            auto f = job->p_->cancel(*job);
-            // This continuation also ensures that the job remains
-            // alive until the cancel method has completed.
-            f.then(
-                EXEC_IN_MAIN
-                [job](decltype(f) f) {
-                    try
-                    {
-                        f.get();
-                    }
-                    catch (std::exception const& e)
-                    {
-                        fprintf(stderr, "Error cancelling download job '%s': %s\n",
-                                job->download_id().c_str(), e.what());
-                    }
-                });
-        }
-        else
-        {
-            ++it;
-        }
+        auto job = it->second;
+        it = downloads_.erase(it);
+        cancel_job(job, "download " + job->download_id());
     }
 
-    for (auto it = uploads_.cbegin(); it != uploads_.cend(); )
+    for (auto it = uploads_.lower_bound(lower);
+         it != uploads_.cend() && it->first.first == service_name; )
     {
-        if (it->second->p_->sender_bus_name() == bus_name)
-        {
-            auto job = it->second;
-            it = uploads_.erase(it);
-            auto f = job->p_->cancel(*job);
-            // This continuation also ensures that the job remains
-            // alive until the cancel method has completed.
-            f.then(
-                EXEC_IN_MAIN
-                [job](decltype(f) f) {
-                    try
-                    {
-                        f.get();
-                    }
-                    catch (std::exception const& e)
-                    {
-                        fprintf(stderr, "Error cancelling upload job '%s': %s\n",
-                                job->upload_id().c_str(), e.what());
-                    }
-                });
-        }
-        else
-        {
-            ++it;
-        }
+        auto job = it->second;
+        it = uploads_.erase(it);
+        cancel_job(job, "upload " + job->upload_id());
     }
+}
+
+template<typename Job>
+void PendingJobs::cancel_job(shared_ptr<Job> const& job, string const& identifier)
+{
+    auto f = job->p_->cancel(*job);
+    // This continuation also ensures that the job remains
+    // alive until the cancel method has completed.
+    auto cancel_future = std::make_shared<boost::future<void>>();
+    *cancel_future = f.then(
+        EXEC_IN_MAIN
+        [job, identifier, cancel_future](decltype(f) f) {
+            try
+            {
+                f.get();
+            }
+            catch (std::exception const& e)
+            {
+                fprintf(stderr, "Error cancelling job '%s': %s\n",
+                        identifier.c_str(), e.what());
+            }
+
+            // Break the reference cycle between the continuation
+            // future and closure, while making sure the future
+            // survives long enough to be marked ready.
+            auto fut = std::make_shared<boost::future<void>>(std::move(*cancel_future));
+            MainLoopExecutor::instance().submit([fut]{});
+        });
 }
 
 }

@@ -7,6 +7,7 @@ set(QT_CLIENT_LIB_LOCAL_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/RootImpl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Runtime_create.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/RuntimeImpl.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/storage_exception.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/UploaderImpl.cpp
         ${CMAKE_SOURCE_DIR}/include/unity/storage/qt/client/internal/local_client/DownloaderImpl.h
         ${CMAKE_SOURCE_DIR}/include/unity/storage/qt/client/internal/local_client/UploaderImpl.h

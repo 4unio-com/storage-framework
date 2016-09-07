@@ -17,7 +17,7 @@ set(SF_PROVIDER_API_VERSION "1")
 # These two should be incremented when the ABI changes.
 set(SF_CLIENT_SOVERSION "0")
 execute_process(
-  COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/get-provider-soversion.sh
+  COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/tools/get-provider-soversion.sh
   OUTPUT_VARIABLE SF_PROVIDER_SOVERSION
   OUTPUT_STRIP_TRAILING_WHITESPACE
   RESULT_VARIABLE result)
@@ -108,7 +108,7 @@ include(EnableCoverageReport)
 
 include(GNUInstallDirs)
 
-find_package(Boost COMPONENTS filesystem system thread REQUIRED)
+find_package(Boost 1.56 COMPONENTS filesystem system thread REQUIRED)
 find_package(Qt5Concurrent REQUIRED)
 find_package(Qt5Core REQUIRED)
 find_package(Qt5DBus REQUIRED)
@@ -130,8 +130,11 @@ add_subdirectory(demo)
 enable_coverage_report(
     TARGETS
         qt-client-lib-common
+        storage-framework-common-internal
         storage-framework-qt-client
         storage-framework-qt-local-client
+        sf-provider-objects
+        storage-framework-provider
     FILTER
         ${CMAKE_SOURCE_DIR}/tests/*
         ${CMAKE_BINARY_DIR}/*

@@ -23,6 +23,7 @@
 #include <unity/storage/provider/Credentials.h>
 
 #include <boost/thread/future.hpp>
+#include <boost/variant.hpp>
 
 #include <sys/types.h>
 #include <string>
@@ -48,15 +49,18 @@ struct UNITY_STORAGE_EXPORT Context
     Credentials credentials;
 };
 
+// Note: When growing the set of supported variant types, add new types
+// to the *end* of the list, and update the marshaling code in dbusmarshal.cpp.
+typedef boost::variant<std::string, int64_t> MetadataValue;
+
 struct UNITY_STORAGE_EXPORT Item
 {
     std::string item_id;
-    std::string parent_id;
+    std::vector<std::string> parent_ids;
     std::string name;
     std::string etag;
     unity::storage::ItemType type;
-    // Should be map<string,variant>
-    std::map<std::string,std::string> metadata;
+    std::map<std::string, MetadataValue> metadata;
 };
 
 typedef std::vector<Item> ItemList;

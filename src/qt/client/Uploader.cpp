@@ -46,6 +46,11 @@ std::shared_ptr<QLocalSocket> Uploader::socket() const
     return p_->socket();
 }
 
+int64_t Uploader::size() const
+{
+    return p_->size();
+}
+
 QFuture<shared_ptr<File>> Uploader::finish_upload()
 {
     return p_->finish_upload();

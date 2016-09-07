@@ -18,14 +18,21 @@
 
 #pragma once
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
+#pragma GCC diagnostic ignored "-Wctor-dtor-privacy"
+#pragma GCC diagnostic ignored "-Wswitch-default"
 #include <QDBusConnection>
 #include <QDBusServiceWatcher>
 #include <QObject>
+#include <QString>
+#pragma GCC diagnostic pop
 
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace unity
 {
@@ -49,27 +56,30 @@ public:
     explicit PendingJobs(QDBusConnection const& bus, QObject *parent=nullptr);
     virtual ~PendingJobs();
 
-    void add_download(std::unique_ptr<DownloadJob> &&job);
-    std::shared_ptr<DownloadJob> get_download(std::string const& download_id);
-    std::shared_ptr<DownloadJob> remove_download(std::string const& download_id);
+    void add_download(QString const& client_bus_name, std::unique_ptr<DownloadJob> &&job);
+    std::shared_ptr<DownloadJob> remove_download(QString const& client_bus_name, std::string const& download_id);
 
-    void add_upload(std::unique_ptr<UploadJob> &&job);
-    std::shared_ptr<UploadJob> get_upload(std::string const& upload_id);
-    std::shared_ptr<UploadJob> remove_upload(std::string const& upload_id);
+    void add_upload(QString const& client_bus_name, std::unique_ptr<UploadJob> &&job);
+    std::shared_ptr<UploadJob> remove_upload(QString const& client_bus_name, std::string const& upload_id);
 
 private Q_SLOTS:
     void service_disconnected(QString const& service_name);
 
 private:
-    void watch_peer(std::string const& bus_name);
-    void unwatch_peer(std::string const& bus_name);
+    void watch_peer(QString const& bus_name);
+    void unwatch_peer(QString const& bus_name);
+
+    template <typename Job>
+    void cancel_job(std::shared_ptr<Job> const& job,
+                    std::string const& identifier);
 
     std::mutex lock_;
-    std::map<std::string,std::shared_ptr<UploadJob>> uploads_;
-    std::map<std::string,std::shared_ptr<DownloadJob>> downloads_;
+    // Key is client_bus_name and upload or download ID.
+    std::map<std::pair<QString,std::string>,std::shared_ptr<UploadJob>> uploads_;
+    std::map<std::pair<QString,std::string>,std::shared_ptr<DownloadJob>> downloads_;
 
     QDBusServiceWatcher watcher_;
-    std::map<std::string,int> services_;
+    std::map<QString,int> services_;
 
     Q_DISABLE_COPY(PendingJobs)
 };

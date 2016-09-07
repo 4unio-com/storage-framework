@@ -20,7 +20,10 @@
 
 #include <unity/storage/visibility.h>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align"
 #include <QException>
+#pragma GCC diagnostic pop
 #include <QString>
 
 namespace unity
@@ -45,6 +48,8 @@ public:
     virtual void raise() const override = 0;
 
     virtual char const* what() const noexcept override;
+
+    QString error_message() const;
 
 private:
     std::string what_string_;
@@ -83,18 +88,16 @@ public:
 class UNITY_STORAGE_EXPORT DeletedException : public StorageException
 {
 public:
-    DeletedException(QString const& error_message, QString const& identity_, QString const& name_);
+    DeletedException(QString const& error_message, QString const& identity_);
     ~DeletedException();
 
     virtual DeletedException* clone() const override;
     virtual void raise() const override;
 
     QString native_identity() const;
-    QString name() const;
 
 private:
     QString identity_;
-    QString name_;
 };
 
 /**
@@ -228,17 +231,22 @@ public:
 };
 
 /**
-\brief Indicates a system error, such as failure to to create a file or folder,
+\brief Indicates a system error, such as failure to create a file or folder,
 or any other (usually non-recoverable) kind of error that should not arise during normal operation.
 */
 class UNITY_STORAGE_EXPORT ResourceException : public StorageException
 {
 public:
-    ResourceException(QString const& error_message);
+    ResourceException(QString const& error_message, int error_code);
     ~ResourceException();
 
     virtual ResourceException* clone() const override;
     virtual void raise() const override;
+
+    int error_code() const noexcept;
+
+private:
+    int error_code_;
 };
 
 }  // namespace client

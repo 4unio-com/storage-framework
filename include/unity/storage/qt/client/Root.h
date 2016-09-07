@@ -70,7 +70,7 @@ public:
     /**
     \brief Returns the account for this root.
     */
-    Account* account() const;
+    std::shared_ptr<Account> account() const;
 
     QFuture<int64_t> free_space_bytes() const;
     QFuture<int64_t> used_space_bytes() const;

@@ -18,11 +18,12 @@
 
 #include <unity/storage/qt/client/internal/remote_client/RuntimeImpl.h>
 
+#include <unity/storage/internal/dbusmarshal.h>
 #include <unity/storage/qt/client/Account.h>
 #include <unity/storage/qt/client/Exceptions.h>
 #include <unity/storage/qt/client/internal/make_future.h>
 #include <unity/storage/qt/client/internal/remote_client/AccountImpl.h>
-#include <unity/storage/qt/client/internal/remote_client/dbusmarshal.h>
+#include <unity/storage/internal/dbusmarshal.h>
 
 #include <QDBusMetaType>
 
@@ -40,6 +41,17 @@
 #include <unistd.h>
 
 using namespace std;
+
+namespace
+{
+
+static const map<QString, QString> BUS_NAMES =
+{
+    { "google-drive-scope", "com.canonical.StorageFramework.Provider.ProviderTest" },
+    { "com.canonical.scopes.mcloud_mcloud_mcloud", "com.canonical.StorageFramework.Provider.McloudProvider" }
+};
+
+}  // namespace
 
 namespace unity
 {
@@ -72,24 +84,32 @@ RuntimeImpl::~RuntimeImpl()
         shutdown();
     }
     // LCOV_EXCL_START
-    catch (std::exception const&)
+    catch (std::exception const& e)
     {
-        qCritical() << "shutdown error";  // TODO, log the error properly
+        qCritical() << "shutdown error" << e.what();
     }
     // LCOV_EXCL_STOP
 }
 
 void RuntimeImpl::shutdown()
 {
-    if (destroyed_.exchange(true))
+    if (destroyed_)
     {
         return;
     }
+    destroyed_ = true;
     conn_.disconnectFromBus(conn_.name());
 }
 
 QFuture<QVector<Account::SPtr>> RuntimeImpl::accounts()
 {
+    if (destroyed_)
+    {
+        qf_.reportException(RuntimeDestroyedException("Runtime::accounts()"));
+        qf_.reportFinished();
+        return qf_.future();
+    }
+
     if (!manager_)
     {
         manager_.reset(new OnlineAccounts::Manager("", conn_));
@@ -110,31 +130,78 @@ QDBusConnection& RuntimeImpl::connection()
 
 void RuntimeImpl::manager_ready()
 {
+    if (destroyed_)
+    {
+        // LCOV_EXCL_START
+        qf_.reportException(RuntimeDestroyedException("Runtime::accounts()"));
+        qf_.reportFinished();
+        return;
+        // LCOV_EXCL_STOP
+    }
+
     timer_.stop();
+
     try
     {
         QVector<Account::SPtr> accounts;
-        for (auto const& a : manager_->availableAccounts("google-drive-scope"))
+        for (auto const map_entry : BUS_NAMES)
         {
-            qDebug() << "got account:" << a->displayName() << a->serviceId() << a->id();
-            auto impl = new AccountImpl(public_instance_, a->id(), "", a->serviceId(), a->displayName());
-            Account::SPtr acc(new Account(impl));
-            impl->set_public_instance(acc);
-            accounts.append(acc);
+            auto service_id = map_entry.first;
+            for (auto const& a : manager_->availableAccounts(service_id))
+            {
+                auto object_path = QStringLiteral("/provider/%1").arg(a->id());
+                try
+                {
+                    auto bus_name = map_entry.second;
+                    accounts.append(make_account(bus_name, object_path,
+                                                 "", a->serviceId(), a->displayName()));
+
+                }
+                catch (LocalCommsException const& e)
+                {
+                    qDebug() << "RuntimeImpl: ignoring non-existent provider" << a->serviceId();
+                }
+            }
         }
         accounts_ = accounts;
-        make_ready_future(qf_, accounts);
+        qf_.reportResult(accounts);
     }
+    // LCOV_EXCL_START
     catch (StorageException const& e)
     {
-        make_exceptional_future(qf_, e);
+        qf_.reportException(e);
     }
+    // LCOV_EXCL_STOP
+    qf_.reportFinished();
 }
 
+// LCOV_EXCL_START
 void RuntimeImpl::timeout()
 {
-    make_exceptional_future(qf_, ResourceException("timeout error"));  // TODO
+    qf_.reportException(ResourceException("Runtime::accounts(): timeout retrieving Online accounts", 0));
+    qf_.reportFinished();
 }
+// LCOV_EXCL_STOP
+
+shared_ptr<Account> RuntimeImpl::make_test_account(QString const& bus_name,
+                                                   QString const& object_path)
+{
+    return make_account(bus_name, object_path, "", "", "");
+}
+
+shared_ptr<Account> RuntimeImpl::make_account(QString const& bus_name,
+                                              QString const& object_path,
+                                              QString const& owner,
+                                              QString const& owner_id,
+                                              QString const& description)
+{
+    auto impl = new AccountImpl(public_instance_, bus_name, object_path,
+                                owner, owner_id, description);
+    Account::SPtr acc(new Account(impl));
+    impl->set_public_instance(acc);
+    return acc;
+}
+
 
 }  // namespace local_client
 }  // namespace internal

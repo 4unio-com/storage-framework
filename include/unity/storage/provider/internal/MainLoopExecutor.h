@@ -19,13 +19,7 @@
 #pragma once
 
 #include <boost/version.hpp>
-
-#if BOOST_VERSION >= 105600
-#  define SF_SUPPORTS_EXECUTORS
-#endif
-#ifdef SF_SUPPORTS_EXECUTORS
-#  include <boost/thread/executor.hpp>
-#endif
+#include <boost/thread/executor.hpp>
 #include <QObject>
 
 #include <functional>
@@ -38,8 +32,6 @@ namespace provider
 {
 namespace internal
 {
-
-#ifdef SF_SUPPORTS_EXECUTORS
 
 /* Declare future continuations like so to execute within the event
  * loop if possible:
@@ -71,12 +63,6 @@ private:
 
     Q_DISABLE_COPY(MainLoopExecutor)
 };
-
-#else
-
-#define EXEC_IN_MAIN /*nothing*/
-
-#endif
 
 }
 }

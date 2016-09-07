@@ -41,6 +41,8 @@ public:
 
     virtual void shutdown() override;
     virtual QFuture<QVector<std::shared_ptr<Account>>> accounts() override;
+    virtual std::shared_ptr<Account> make_test_account(QString const& bus_name,
+                                                       QString const& object_path) override;
 };
 
 }  // namespace local_client

@@ -18,6 +18,7 @@
 
 #include <unity/storage/provider/internal/ProviderInterface.h>
 #include <unity/storage/provider/DownloadJob.h>
+#include <unity/storage/provider/Exceptions.h>
 #include <unity/storage/provider/ProviderBase.h>
 #include <unity/storage/provider/UploadJob.h>
 #include <unity/storage/provider/internal/AccountData.h>
@@ -171,15 +172,13 @@ QString ProviderInterface::CreateFile(QString const& parent_id, QString const& n
                 EXEC_IN_MAIN
                 [account, message](decltype(f) f) -> QDBusMessage {
                     auto job = f.get();
-                    job->p_->set_sender_bus_name(message.service().toStdString());
-
                     auto upload_id = QString::fromStdString(job->upload_id());
                     QDBusUnixFileDescriptor file_desc;
                     int fd = job->p_->take_write_socket();
                     file_desc.setFileDescriptor(fd);
                     close(fd);
 
-                    account->jobs().add_upload(std::move(job));
+                    account->jobs().add_upload(message.service(), std::move(job));
                     return message.createReply({
                             QVariant(upload_id),
                             QVariant::fromValue(file_desc),
@@ -198,15 +197,13 @@ QString ProviderInterface::Update(QString const& item_id, int64_t size, QString 
                 EXEC_IN_MAIN
                 [account, message](decltype(f) f) -> QDBusMessage {
                     auto job = f.get();
-                    job->p_->set_sender_bus_name(message.service().toStdString());
-
                     auto upload_id = QString::fromStdString(job->upload_id());
                     QDBusUnixFileDescriptor file_desc;
                     int fd = job->p_->take_write_socket();
                     file_desc.setFileDescriptor(fd);
                     close(fd);
 
-                    account->jobs().add_upload(std::move(job));
+                    account->jobs().add_upload(message.service(), std::move(job));
                     return message.createReply({
                             QVariant(upload_id),
                             QVariant::fromValue(file_desc),
@@ -219,15 +216,10 @@ QString ProviderInterface::Update(QString const& item_id, int64_t size, QString 
 ProviderInterface::IMD ProviderInterface::FinishUpload(QString const& upload_id)
 {
     queue_request([upload_id](shared_ptr<AccountData> const& account, Context const& /*ctx*/, QDBusMessage const& message) {
-            // Throws if job is not available
-            auto job = account->jobs().get_upload(upload_id.toStdString());
-            if (job->p_->sender_bus_name() != message.service().toStdString())
-            {
-                throw runtime_error("Upload job belongs to a different client");
-            }
             // FIXME: removing the job at this point means we can't
             // cancel during finish().
-            account->jobs().remove_upload(upload_id.toStdString());
+            // Throws if job is not available
+            auto job = account->jobs().remove_upload(message.service(), upload_id.toStdString());
             auto f = job->p_->finish(*job);
             return f.then(
                 EXEC_IN_MAIN
@@ -243,12 +235,7 @@ void ProviderInterface::CancelUpload(QString const& upload_id)
 {
     queue_request([upload_id](shared_ptr<AccountData> const& account, Context const& /*ctx*/, QDBusMessage const& message) {
             // Throws if job is not available
-            auto job = account->jobs().get_upload(upload_id.toStdString());
-            if (job->p_->sender_bus_name() != message.service().toStdString())
-            {
-                throw runtime_error("Upload job belongs to a different client");
-            }
-            account->jobs().remove_upload(upload_id.toStdString());
+            auto job = account->jobs().remove_upload(message.service(), upload_id.toStdString());
             auto f = job->p_->cancel(*job);
             return f.then(
                 EXEC_IN_MAIN
@@ -268,15 +255,13 @@ QString ProviderInterface::Download(QString const& item_id, QDBusUnixFileDescrip
                 EXEC_IN_MAIN
                 [account, message](decltype(f) f) -> QDBusMessage {
                     auto job = f.get();
-                    job->p_->set_sender_bus_name(message.service().toStdString());
-
                     auto download_id = QString::fromStdString(job->download_id());
                     QDBusUnixFileDescriptor file_desc;
                     int fd = job->p_->take_read_socket();
                     file_desc.setFileDescriptor(fd);
                     close(fd);
 
-                    account->jobs().add_download(std::move(job));
+                    account->jobs().add_download(message.service(), std::move(job));
                     return message.createReply({
                             QVariant(download_id),
                             QVariant::fromValue(file_desc),
@@ -289,15 +274,10 @@ QString ProviderInterface::Download(QString const& item_id, QDBusUnixFileDescrip
 void ProviderInterface::FinishDownload(QString const& download_id)
 {
     queue_request([download_id](shared_ptr<AccountData> const& account, Context const& /*ctx*/, QDBusMessage const& message) {
-            // Throws if job is not available
-            auto job = account->jobs().get_download(download_id.toStdString());
-            if (job->p_->sender_bus_name() != message.service().toStdString())
-            {
-                throw runtime_error("Download job belongs to a different client");
-            }
             // FIXME: removing the job at this point means we can't
             // cancel during finish().
-            account->jobs().remove_download(download_id.toStdString());
+            // Throws if job is not available
+            auto job = account->jobs().remove_download(message.service(), download_id.toStdString());
             auto f = job->p_->finish(*job);
             return f.then(
                 EXEC_IN_MAIN
