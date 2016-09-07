@@ -1,3 +1,10 @@
+storage-framework (0.1+16.10.20160907.2-0ubuntu1) yakkety; urgency=medium
+
+  [ James Henstridge, Michi Henning, Tarmac ]
+  * Branch to add devel changes to silo 60.
+
+ -- Michi Henning <michi@triodia.com>  Wed, 07 Sep 2016 02:47:09 +0000
+
 storage-framework (0.1+16.10.20160804.1-0ubuntu1) yakkety; urgency=medium
 
   [ Michi Henning ]
