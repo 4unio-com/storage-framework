@@ -104,7 +104,7 @@ endif()
 include(CTest)
 enable_testing()
 
-include(EnableCoverageReport)
+find_package(CoverageReport)
 
 include(GNUInstallDirs)
 
