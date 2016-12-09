@@ -9,7 +9,7 @@ Priority: optional
 Maintainer: Ubuntu Core Developers <ubuntu-devel-discuss@lists.ubuntu.com>
 Standards-Version: 3.9.6
 Build-Depends: cmake,
-               cmake-extras (>= 0.4),
+               cmake-extras (>= 0.10),
                debhelper (>= 9),
                devscripts,
                doxygen,

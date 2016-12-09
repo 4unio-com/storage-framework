@@ -1,3 +1,9 @@
+storage-framework (0.2+17.04.20161209-0ubuntu1) zesty; urgency=medium
+
+  * Compatibility with unversioned cmake-extras modules (LP: #1563573)
+
+ -- Pete Woods <pete.woods@canonical.com>  Fri, 09 Dec 2016 10:59:39 +0000
+
 storage-framework (0.2+17.04.20161104-0ubuntu1) zesty; urgency=medium
 
   [ Michi Henning ]
